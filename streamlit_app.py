@@ -1,5 +1,6 @@
 import streamlit as st
 import random
+import time
 
 # Настройка страницы
 st.set_page_config(page_title="Fake Artist Мультиплеер", page_icon="🎨", layout="centered")
@@ -13,7 +14,6 @@ WORDS_BANK = {
     "Одежда и Обувь 👟": ["Кроссовки", "Шляпа", "Куртка", "Носки", "Галстук", "Джинсы", "Футболка"]
 }
 
-# Твой личный секретный пароль для управления игрой (можешь поменять на свой)
 ADMIN_PASSWORD = "123"
 
 class GameState:
@@ -30,7 +30,6 @@ class GameState:
         self.round_id += 1
         self.claimed_count = 0
         
-        # Генерируем пул ролей на 4 игрока
         self.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
         spy_index = random.randint(0, 3)
         self.roles_pool[spy_index] = "ШПИОН"
@@ -41,50 +40,54 @@ def get_global_game():
 
 shared_game = get_global_game()
 
-st.title("🎨 Fake Artist: Онлайн Раздача")
+st.title("🎨 Fake Artist: Живое Обновление")
 
-# Секретная панель администратора
+# Панель ведущего в боковой панели
 with st.sidebar:
     st.header("⚙️ Панель ведущего")
-    pass_input = st.text_input("Введите пароль для управления:", type="password")
+    pass_input = st.text_input("Введите пароль:", type="password")
     
     if pass_input == ADMIN_PASSWORD:
         st.success("Доступ разрешен!")
         if st.button("🔄 Сгенерировать новый раунд", type="primary"):
             shared_game.start_new_round()
-            st.success(f"🎉 Раунд №{shared_game.round_id} успешно запущен!")
+            st.success(f"🎉 Раунд №{shared_game.round_id} запущен!")
     else:
         st.caption("Панель только для создателя игры.")
 
 st.divider()
 
-if shared_game.theme is not None:
-    st.subheader(f"Текущий раунд №{shared_game.round_id}")
-    
-    role_key = f"role_r{shared_game.round_id}"
-    
-    # Если этот телефон еще не брал роль
-    if role_key not in st.session_state:
-        if shared_game.claimed_count < 4:
-            if st.button("👁️ Узнать мою роль", use_container_width=True):
-                st.session_state[role_key] = shared_game.roles_pool[shared_game.claimed_count]
-                shared_game.claimed_count += 1
-                st.rerun()
-        else:
-            st.error("🛑 Все 4 роли уже разобраны пацанами! Дождитесь, пока админ запустит новый раунд.")
-            
-    # Если роль уже получена
-    else:
-        my_role = st.session_state[role_key]
+# Спец-фрагмент, который сам шуршит и проверяет сервер каждые 2 секунды
+@st.fragment(run_every=2)
+def live_game_zone():
+    if shared_game.theme is not None:
+        st.subheader(f"Текущий раунд №{shared_game.round_id}")
         
-        # Сразу чекбокс без лишних надписей про номера
-        show_card = st.checkbox("Показать мою карточку", key=f"show_v_{shared_game.round_id}")
+        role_key = f"role_r{shared_game.round_id}"
         
-        if show_card:
-            st.info(f"📋 Категория: **{shared_game.theme}**")
-            if my_role == "ШПИОН":
-                st.error("🕵️ ТЫ ШПИОН! Ты не знаешь слова. Рисуй аккуратно и коси под остальных!")
+        # Если роль еще не взята в этом раунде
+        if role_key not in st.session_state:
+            if shared_game.claimed_count < 4:
+                if st.button("👁️ Узнать мою роль", use_container_width=True):
+                    st.session_state[role_key] = shared_game.roles_pool[shared_game.claimed_count]
+                    shared_game.claimed_count += 1
+                    st.rerun()
             else:
-                st.success(f"✏️ ТЫ ХУДОЖНИК! Загаданное слово: **{shared_game.word}**")
-else:
-    st.warning("Организатор еще не запустил первый раунд. Ждем...")
+                st.error("🛑 Все 4 роли уже разобраны! Ждем новый раунд от админа.")
+                
+        # Если роль уже на этом телефоне получена
+        else:
+            my_role = st.session_state[role_key]
+            show_card = st.checkbox("Показать мою карточку", key=f"show_v_{shared_game.round_id}")
+            
+            if show_card:
+                st.info(f"📋 Категория: **{shared_game.theme}**")
+                if my_role == "ШПИОН":
+                    st.error("🕵️ ТЫ ШПИОН! Ты не знаешь слова. Рисуй аккуратно и коси под остальных!")
+                else:
+                    st.success(f"✏️ ТЫ ХУДОЖНИК! Загаданное слово: **{shared_game.word}**")
+    else:
+        st.warning("Организатор еще не запустил раунд. Ждем... (страница обновится сама)")
+
+# Запускаем нашу живую зону
+live_game_zone()
