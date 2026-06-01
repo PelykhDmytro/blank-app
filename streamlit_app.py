@@ -72,21 +72,37 @@ def get_global_game():
 
 shared_game = get_global_game()
 
-# Функция генерации общего рисунка на сервере с помощью Pillow
+# Полностью безопасная функция генерации общего рисунка
 def render_global_board(strokes, width=500, height=380):
     img = Image.new("RGB", (width, height), "#ffffff")
     draw = ImageDraw.Draw(img)
     
     for stroke in strokes:
-        if stroke.get("type") == "path" and "path" in stroke:
-            path_data = stroke["path"]
-            points = []
-            for cmd in path_data:
-                if len(cmd) >= 3:
-                    points.append((cmd[-2], cmd[-1]))
+        if not stroke:
+            continue
             
-            if len(points) >= 2:
-                draw.line(points, fill="#111111", width=4, joint="round")
+        points = []
+        
+        # ЕСЛИ СТРОКА ПРИШЛА КАК СЛОВАРЬ (Стандартный объект Fabric.js)
+        if isinstance(stroke, dict):
+            if stroke.get("type") == "path" and "path" in stroke:
+                path_data = stroke["path"]
+                for cmd in path_data:
+                    if isinstance(cmd, list) and len(cmd) >= 3:
+                        points.append((cmd[-2], cmd[-1]))
+                        
+        # ЕСЛИ СТРОКА ПРИШЛА КАК ПЛОСКИЙ СПИСОК (Защита от AttributeError)
+        elif isinstance(stroke, list):
+            for cmd in stroke:
+                if isinstance(cmd, list) and len(cmd) >= 3:
+                    points.append((cmd[-2], cmd[-1]))
+                elif isinstance(cmd, dict) and "x" in cmd and "y" in cmd:
+                    points.append((cmd["x"], cmd["y"]))
+                    
+        # Рисуем линию, если собрали хотя бы 2 точки
+        if len(points) >= 2:
+            draw.line(points, fill="#111111", width=4, joint="round")
+            
     return img
 
 st.title("🎨 Fake Artist Мультиплеер")
