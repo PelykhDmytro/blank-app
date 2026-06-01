@@ -55,7 +55,6 @@ class GameState:
         spy_index = random.randint(0, 3)
         self.roles_pool[spy_index] = "ШПИОН"
 
-    # Добавляем тот самый метод, который требовала кнопка!
     def reset_game_completely(self):
         self.theme = None
         self.word = None
@@ -128,29 +127,36 @@ def live_game_zone():
     st.subheader("🖼️ Общая онлайн доска")
     st.caption("Сделай свой ход (нарисуй одну линию) и нажми кнопку ниже, чтобы отправить её остальным:")
 
-    # Подготавливаем данные для холста: если там None, плагин ждет пустую строку или пустой словарь
-    init_draw = shared_game.canvas_data if shared_game.canvas_data is not None else ""
+    # Безопасная инициализация: если данных нет, передаем пустой шаблон JSON для холста
+    if shared_game.canvas_data is not None:
+        init_draw = shared_game.canvas_data
+    else:
+        init_draw = {"backgroundImage": None, "objects": []}
 
-    # Настройки холста
-    canvas_result = st_canvas(
-        fill_color="rgba(255, 165, 0, 0.3)",
-        stroke_width=4,
-        stroke_color="#000000",
-        background_color="#FFFFFF",
-        initial_drawing=init_draw, # Передаем безопасное значение вместо None
-        update_vis_cycle=True,
-        height=400,
-        width=500,
-        drawing_mode="freedraw",
-        key="global_canvas_widget" # Статичный ключ, чтобы компонент не пересоздавался каждые 3 секунды
-    )
+    # Изолируем виджет во избежание конфликтов рендеринга
+    canvas_container = st.container()
+    with canvas_container:
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 165, 0, 0.3)",
+            stroke_width=4,
+            stroke_color="#000000",
+            background_color="#FFFFFF",
+            initial_drawing=init_draw, 
+            update_vis_cycle=True,
+            height=400,
+            width=500,
+            drawing_mode="freedraw",
+            key=f"canvas_static_{shared_game.round_id}" # Меняем ключ при смене раунда для полного сброса
+        )
 
     # Синхронизация рисунка
     if canvas_result.json_data is not None:
         if canvas_result.json_data != shared_game.canvas_data:
-            if st.button("📤 Отправить мою линию на доску", type="primary", use_container_width=True):
-                shared_game.canvas_data = canvas_result.json_data
-                st.success("Линия зафиксирована!")
-                st.rerun()
+            # Если холст пустой по умолчанию, не предлагаем отправить воздух
+            if canvas_result.json_data.get("objects"):
+                if st.button("📤 Отправить мою линию на доску", type="primary", use_container_width=True):
+                    shared_game.canvas_data = canvas_result.json_data
+                    st.success("Линия зафиксирована!")
+                    st.rerun()
 
 live_game_zone()
