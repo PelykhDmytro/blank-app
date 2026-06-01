@@ -97,7 +97,7 @@ st.divider()
 if shared_game.round_id == 0 or shared_game.theme is None:
     st.warning("Организатор еще не запустил раунд. Ждем...")
 else:
-    # --- ЗОНА СТАТУСА (Обновление каждые 3 секунды) ---
+    # --- ЗОНА СТАТУСА (Авто-обновление у пацанов раз в 3 секунды) ---
     @st.fragment(run_every=3)
     def live_status_zone():
         st.subheader(f"Текущий раунд №{shared_game.round_id}")
@@ -129,7 +129,7 @@ else:
     st.subheader("🖼️ Общая онлайн-доска")
     st.caption("Нарисуй одну линию (зажми мышку/палец) и нажми «Отправить мой ход».")
 
-    # Жесткая очистка и валидация данных перед отправкой в JS
+    # Валидация и перевод линий в чистый JSON для фронтенда
     cleaned_lines = []
     for line in shared_game.canvas_lines:
         if isinstance(line, list) and len(line) >= 2:
@@ -137,7 +137,7 @@ else:
             
     existing_lines_json = json.dumps(cleaned_lines)
 
-    # Стабильный HTML5 холст. Передает данные через стандартный Input
+    # HTML5 Холст с легальным Streamlit JS API
     custom_canvas_html = f"""
     <div style="text-align: center; font-family: sans-serif;">
         <canvas id="paintCanvas" width="500" height="350" style="border:2px solid #333; background-color:#fff; cursor:crosshair; border-radius:5px; touch-action: none;"></canvas>
@@ -146,6 +146,15 @@ else:
     </div>
 
     <script>
+        // Подключаем стандартные функции связи со Streamlit
+        function sendMessageToStreamlit(value) {{
+            window.parent.postMessage({{
+                isStreamlitMessage: true,
+                type: "streamlit:setComponentValue",
+                value: value
+            }}, "*");
+        }}
+
         const canvas = document.getElementById('paintCanvas');
         const ctx = canvas.getContext('2d');
         const sendBtn = document.getElementById('sendBtn');
@@ -160,7 +169,7 @@ else:
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
 
-        // Отрисовка линий из базы данных
+        // Рисуем линии, которые уже сохранены на бэкенде
         function drawSavedLines() {{
             existingLines.forEach(line => {{
                 if (!line || line.length < 2) return;
@@ -174,7 +183,6 @@ else:
         }}
         drawSavedLines();
 
-        // Координаты
         function getCoords(e) {{
             const rect = canvas.getBoundingClientRect();
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -212,65 +220,33 @@ else:
         canvas.addEventListener('touchmove', draw, {{passive: false}});
         canvas.addEventListener('touchend', stopDrawing);
 
-        // Отправка через postMessage в родительское окно без перезагрузок
+        // Отправка данных без нарушения CORS и Same-Origin
         sendBtn.addEventListener('click', () => {{
             if (currentLine.length < 2) {{
                 alert("Сначала нарисуй линию!");
                 return;
             }}
-            window.parent.postMessage({{
-                type: 'streamlit:reportReady',
-                value: JSON.stringify(currentLine)
-            }}, '*');
             
-            // Визуальный фидбек
-            sendBtn.innerText = "⏳ Передаем ход...";
-            sendBtn.style.backgroundColor = "#ffaa00";
+            // Отправляем массив точек напрямую в Python-компонент
+            sendMessageToStreamlit(currentLine);
+            
+            sendBtn.innerText = "⏳ Ход отправлен!";
+            sendBtn.style.backgroundColor = "#2ebd59";
         }});
     </script>
     """
 
-    # Создаем скрытый или явный приемник данных в интерфейсе Streamlit
-    # text_input поймает строку из JS, когда сработает событие отправки
-    raw_transport = st.text_input("Системный буфер обмена (не трогать)", key="line_transport_buffer", label_visibility="collapsed")
+    # Вызываем HTML как интерактивный компонент. 
+    # В переменную `new_line` мгновенно прилетит значение, когда юзер нажмет кнопку отправки
+    new_line = st.components.v1.html(custom_canvas_html, height=430, key=f"canvas_key_r{shared_game.round_id}")
 
-    # Скрипт-мост, который берет сообщение из iframe холста и аккуратно вставляет в text_input Streamlit
-    st.components.v1.html(custom_canvas_html, height=420)
-    
-    components_js_bridge = """
-    <script>
-    window.addEventListener('message', function(e) {
-        if (e.data && e.data.type === 'streamlit:reportReady') {
-            // Находим текстовое поле ввода Streamlit внутри родительского DOM и пишем туда данные
-            const inputs = window.parent.document.querySelectorAll('input[type="text"]');
-            // Перебираем, ищем наш скрытый буфер
-            for (let input of inputs) {
-                if (input.id && input.id.includes('line_transport_buffer')) {
-                    input.value = e.data.value;
-                    input.dispatchEvent(new Event('input', { bubbles: true }));
-                    input.dispatchEvent(new Event('change', { bubbles: true }));
-                    break;
-                }
-            }
-        }
-    });
-    </script>
-    """
-    st.components.v1.html(components_js_bridge, height=0)
+    # Если игрок отправил новую линию, сохраняем её в глобальный стейт
+    if new_line is not None:
+        if not shared_game.canvas_lines or shared_game.canvas_lines[-1] != new_line:
+            shared_game.canvas_lines.append(new_line)
+            st.success("Твой ход успешно добавлен на доску!")
+            st.rerun()
 
-    # Если в буфер прилетела строка с точками новой линии
-    if raw_transport:
-        try:
-            new_line_data = json.loads(raw_transport)
-            if new_line_data and (not shared_game.canvas_lines or shared_game.canvas_lines[-1] != new_line_data):
-                shared_game.canvas_lines.append(new_line_data)
-                # Очищаем сессионный буфер, чтобы скрипт не зациклился
-                st.session_state["line_transport_buffer"] = ""
-                st.success("Линия сохранена!")
-                st.rerun()
-        except Exception:
-            pass
-
-    # Кнопка ручной синхронизации для клиентов
+    # Кнопка обновления доски для остальных участников
     if st.button("🔄 Синхронизировать доску (Показать чужие ходы)", use_container_width=True):
         st.rerun()
