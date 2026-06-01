@@ -74,21 +74,17 @@ shared_game = get_global_game()
 
 # Функция генерации общего рисунка на сервере с помощью Pillow
 def render_global_board(strokes, width=500, height=380):
-    # Создаем белый холст
     img = Image.new("RGB", (width, height), "#ffffff")
     draw = ImageDraw.Draw(img)
     
-    # Отрисовываем каждую сохраненную линию
     for stroke in strokes:
         if stroke.get("type") == "path" and "path" in stroke:
             path_data = stroke["path"]
-            # Собираем точки из SVG пути (команды M и Q/L)
             points = []
             for cmd in path_data:
-                if len(cmd) >= 3:  # Точки координат всегда в конце команды
+                if len(cmd) >= 3:
                     points.append((cmd[-2], cmd[-1]))
             
-            # Если набралось хотя бы 2 точки — рисуем линию
             if len(points) >= 2:
                 draw.line(points, fill="#111111", width=4, joint="round")
     return img
@@ -120,7 +116,7 @@ st.divider()
 if shared_game.round_id == 0 or shared_game.theme is None:
     st.warning("Организатор еще не запустил раунд. Ждем...")
 else:
-    # --- ЗОНА СТАТУСА (Раз в 4 секунды) ---
+    # --- ЗОНА СТАТУСА ---
     @st.fragment(run_every=4)
     def live_status_zone():
         st.subheader(f"Текущий раунд №{shared_game.round_id}")
@@ -133,7 +129,7 @@ else:
                     shared_game.claimed_count += 1
                     st.rerun()
             else:
-                st.error("🛑 Все роли разобраны пацанами!")
+                st.error("🛑 Все роли разобраны!")
         else:
             my_role = st.session_state[role_key]
             show_card = st.checkbox("Показать мою карточку", key=f"show_v_{shared_game.round_id}")
@@ -154,7 +150,6 @@ else:
     st.subheader("🖼️ Актуальная общая доска")
     st.caption("Ниже показано то, что уже нарисовано всеми игроками на данный момент:")
     
-    # Рендерим картинку из сохраненных линий
     board_image = render_global_board(shared_game.all_strokes)
     st.image(board_image, use_container_width=True)
     
@@ -165,9 +160,8 @@ else:
 
     # --- 2. ЗОНА ДЛЯ СВОЕГО ХОДА (ВСЕГДА ЧИСТЫЙ ХОЛСТ) ---
     st.subheader("✏️ Твой холст для нового хода")
-    st.caption("Нарисуй **одну новую линию** на белом поле ниже и нажми кнопку отправки:")
+    st.caption("Нарисуй одну новую линию на белом поле ниже и нажми кнопку отправки:")
 
-    # Ключ холста меняется ТОЛЬКО при отправке хода текущим пользователем, чтобы очистить поле
     canvas_user_key = f"user_canvas_r{shared_game.round_id}_stroke{st.session_state.get('my_last_stroke_idx', 0)}"
 
     canvas_result = st_canvas(
@@ -178,7 +172,7 @@ else:
         height=380,
         width=500,
         drawing_mode="freedraw",
-        initial_drawing={"objects": [], "background": ""}, # Всегда чистый при старте хода!
+        initial_drawing={"objects": [], "background": ""},
         update_streamlit=True,
         key=canvas_user_key
     )
@@ -189,14 +183,18 @@ else:
             user_objects = canvas_result.json_data.get("objects", [])
             
             if len(user_objects) > 0:
-                # Забираем самую последнюю нарисованную линию
                 new_stroke = user_objects[-1]
-                
                 try:
                     clean_dict = json.loads(json.dumps(new_stroke))
                     shared_game.all_strokes.append(clean_dict)
                     
-                    # Сдвигаем счетчик штрихов пользователя, чтобы очистить его локальный холст
                     st.session_state['my_last_stroke_idx'] = st.session_state.get('my_last_stroke_idx', 0) + 1
-                    
-                    st.success("🎉
+                    st.success("🎉 Твой ход успешно добавлен на общую доску!")
+                    st.rerun()
+                except Exception as json_err:
+                    st.error(f"Ошибка обработки линии: {json_err}")
+            else:
+                st.warning("👉 Твой холст пуст! Сначала нарисуй линию.")
+
+    st.write("---")
+    st.metric(label="📊 Всего линий нарисовано в этом раунде:", value=len(shared_game.all_strokes))
