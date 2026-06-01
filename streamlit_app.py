@@ -39,7 +39,7 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.all_strokes = []  # Храним чистые словари объектов (рисунков)
+        self.all_strokes = []  # Храним список линий (объектов) рисунка
 
     def start_new_round(self):
         if not self.themes_pool:
@@ -98,7 +98,7 @@ st.divider()
 if shared_game.round_id == 0 or shared_game.theme is None:
     st.warning("Организатор еще не запустил раунд. Ждем...")
 else:
-    # --- ЗОНА СТАТУСА ---
+    # --- ЗОНА СТАТУСА (Авто-обновление раз в 3 секунды) ---
     @st.fragment(run_every=3)
     def live_status_zone():
         st.subheader(f"Текущий раунд №{shared_game.round_id}")
@@ -128,13 +128,14 @@ else:
 
     st.write("---")
     st.subheader("🖼️ Общая онлайн-доска")
+    st.caption("Сделай свой ход (нарисуй ОДНУ линию) и нажми кнопку ниже, чтобы отправить её остальным:")
 
-    # Пересобираем холст на основе сохраненных объектов линий
+    # Формируем текущее состояние холста из сохраненных на сервере линий
     initial_drawing = {"objects": shared_game.all_strokes, "background": ""}
 
-    # Родной и стабильный холст
+    # Конфигурация официального виджета холста
     canvas_result = st_canvas(
-        fill_color="rgba(255, 165, 0, 0)",  # Прозрачный фон
+        fill_color="rgba(255, 165, 0, 0)",
         stroke_width=4,
         stroke_color="#111111",
         background_color="#ffffff",
@@ -142,30 +143,31 @@ else:
         width=500,
         drawing_mode="freedraw",
         initial_drawing=initial_drawing,
-        update_ some_data=True,
+        update_streamlit=True,
         key=f"canvas_classic_r{shared_game.round_id}"
     )
 
     st.write("### 📥 Шаг 2: Фиксация линии")
     if st.button("🚀 Отправить мой ход в игру", type="primary", use_container_width=True):
-        if canvas_result.json_data is not None:
+        if canvas_result is not None and canvas_result.json_data is not None:
             current_objects = canvas_result.json_data.get("objects", [])
             
+            # Проверяем, появилось ли на холсте что-то новое по сравнению с базой данных
             if len(current_objects) > len(shared_game.all_strokes):
-                # Берем только НОВУЮ нарисованную линию
+                # Достаем последнюю нарисованную пользователем линию
                 new_stroke = current_objects[-1]
                 
-                # Защита от JSON-ошибки: переводим в строку и обратно, получая чистый Python dict
+                # Принудительно сериализуем в чистый Python dict, чтобы избежать краша JSON
                 clean_dict = json.loads(json.dumps(new_stroke))
                 
                 shared_game.all_strokes.append(clean_dict)
-                st.success("🎉 Линия успешно отправлена на сервер!")
+                st.success("🎉 Твоя линия успешно улетела на сервер!")
                 st.rerun()
             else:
-                st.warning("👉 Сначала нарисуй новую линию на холсте перед отправкой!")
+                st.warning("👉 Холст чист или изменений нет! Нарисуй линию перед отправкой.")
 
-    # Кнопка обновления состояния для других игроков
+    # Блок синхронизации и статистики
     st.write("---")
-    st.metric(label="📊 Всего линий нарисовано:", value=len(shared_game.all_strokes))
+    st.metric(label="📊 Всего линий нарисовано на доске:", value=len(shared_game.all_strokes))
     if st.button("🔄 Обновить доску (Показать ходы других игроков)", use_container_width=True):
         st.rerun()
