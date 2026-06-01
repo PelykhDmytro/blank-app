@@ -127,49 +127,44 @@ else:
 
     st.write("---")
     st.subheader("🖼️ Общая онлайн-доска")
-    st.caption("Нарисуй одну линию (зажми мышку/палец) и нажми «Отправить мой ход».")
 
-    # Валидация и перевод линий в чистый JSON для фронтенда
+    # Переводим существующие линии в JSON
     cleaned_lines = []
     for line in shared_game.canvas_lines:
         if isinstance(line, list) and len(line) >= 2:
             cleaned_lines.append(line)
-            
     existing_lines_json = json.dumps(cleaned_lines)
 
-    # HTML5 Холст с легальным Streamlit JS API
+    # HTML5 Холст, генерирующий строку для вставки
     custom_canvas_html = f"""
-    <div style="text-align: center; font-family: sans-serif;">
+    <div style="text-align: center; font-family: sans-serif; background-color: #f9f9f9; padding: 10px; border-radius: 10px;">
         <canvas id="paintCanvas" width="500" height="350" style="border:2px solid #333; background-color:#fff; cursor:crosshair; border-radius:5px; touch-action: none;"></canvas>
         <br><br>
-        <button id="sendBtn" style="background-color: #ff4b4b; color: white; border: none; padding: 12px 20px; font-size: 16px; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold;">📤 Отправить мой ход</button>
+        <button id="generateBtn" style="background-color: #ff4b4b; color: white; border: none; padding: 12px 20px; font-size: 15px; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold;"> Нажмите сюда, когда закончите линию</button>
+        <br><br>
+        <div id="outputZone" style="display: none; background: #e3f2fd; padding: 10px; border-radius: 5px; border: 1px dashed #1e88e5;">
+            <span style="font-size: 13px; color: #0d47a1;"> Скопируйте этот код линии:</span>
+            <input id="codeResult" type="text" readonly style="width: 100%; text-align: center; margin: 5px 0; padding: 5px; font-weight: bold;" onclick="this.select();">
+            <span style="font-size: 11px; color: #555;">(Кликните на текст выше, чтобы выделить его, скопируйте и вставьте в поле ввода под холстом)</span>
+        </div>
     </div>
 
     <script>
-        // Подключаем стандартные функции связи со Streamlit
-        function sendMessageToStreamlit(value) {{
-            window.parent.postMessage({{
-                isStreamlitMessage: true,
-                type: "streamlit:setComponentValue",
-                value: value
-            }}, "*");
-        }}
-
         const canvas = document.getElementById('paintCanvas');
         const ctx = canvas.getContext('2d');
-        const sendBtn = document.getElementById('sendBtn');
+        const generateBtn = document.getElementById('generateBtn');
+        const outputZone = document.getElementById('outputZone');
+        const codeResult = document.getElementById('codeResult');
         
         let isDrawing = false;
         let currentLine = [];
         const existingLines = {existing_lines_json};
 
-        // Настройки кисти
         ctx.strokeStyle = "#111111";
         ctx.lineWidth = 4;
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
 
-        // Рисуем линии, которые уже сохранены на бэкенде
         function drawSavedLines() {{
             existingLines.forEach(line => {{
                 if (!line || line.length < 2) return;
@@ -187,7 +182,7 @@ else:
             const rect = canvas.getBoundingClientRect();
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
             const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-            return {{ x: clientX - rect.left, y: clientY - rect.top }};
+            return {{ x: Math.round(clientX - rect.left), y: Math.round(clientY - rect.top) }};
         }}
 
         function startDrawing(e) {{
@@ -208,45 +203,52 @@ else:
             ctx.stroke();
         }}
 
-        function stopDrawing() {{
-            isDrawing = false;
-        }}
-
         canvas.addEventListener('mousedown', startDrawing);
         canvas.addEventListener('mousemove', draw);
-        window.addEventListener('mouseup', stopDrawing);
+        window.addEventListener('mouseup', () => isDrawing = false);
 
         canvas.addEventListener('touchstart', startDrawing, {{passive: false}});
         canvas.addEventListener('touchmove', draw, {{passive: false}});
-        canvas.addEventListener('touchend', stopDrawing);
+        canvas.addEventListener('touchend', () => isDrawing = false);
 
-        // Отправка данных без нарушения CORS и Same-Origin
-        sendBtn.addEventListener('click', () => {{
+        generateBtn.addEventListener('click', () => {{
             if (currentLine.length < 2) {{
-                alert("Сначала нарисуй линию!");
+                alert("Сначала нарисуйте линию на холсте!");
                 return;
             }}
-            
-            // Отправляем массив точек напрямую в Python-компонент
-            sendMessageToStreamlit(currentLine);
-            
-            sendBtn.innerText = "⏳ Ход отправлен!";
-            sendBtn.style.backgroundColor = "#2ebd59";
+            // Сжимаем массив точек в строку для удобной вставки в инпут
+            const compressedStr = btoa(JSON.stringify(currentLine));
+            codeResult.value = compressedStr;
+            outputZone.style.display = "block";
+            generateBtn.innerText = " Код сгенерирован ниже!";
+            generateBtn.style.backgroundColor = "#2ebd59";
         }});
     </script>
     """
 
-    # Вызываем HTML как интерактивный компонент. 
-    # В переменную `new_line` мгновенно прилетит значение, когда юзер нажмет кнопку отправки
-    new_line = st.components.v1.html(custom_canvas_html, height=430, key=f"canvas_key_r{shared_game.round_id}")
+    # Выводим холст
+    st.components.v1.html(custom_canvas_html, height=490)
 
-    # Если игрок отправил новую линию, сохраняем её в глобальный стейт
-    if new_line is not None:
-        if not shared_game.canvas_lines or shared_game.canvas_lines[-1] != new_line:
-            shared_game.canvas_lines.append(new_line)
-            st.success("Твой ход успешно добавлен на доску!")
-            st.rerun()
+    # Поле ввода Streamlit, куда игрок вставляет сгенерированный код хода
+    st.write("### 📥 Шаг 2: Отправка хода в игру")
+    input_code = st.text_input("Вставьте скопированный код линии сюда и нажмите Enter:", key=f"input_code_r{shared_game.round_id}")
 
-    # Кнопка обновления доски для остальных участников
-    if st.button("🔄 Синхронизировать доску (Показать чужие ходы)", use_container_width=True):
+    if input_code:
+        try:
+            import base64
+            # Декодируем строку обратно в массив точек
+            decoded_json = base64.b64decode(input_code).decode('utf-8')
+            parsed_line = json.loads(decoded_json)
+            
+            if parsed_line and isinstance(parsed_line, list):
+                if not shared_game.canvas_lines or shared_game.canvas_lines[-1] != parsed_line:
+                    shared_game.canvas_lines.append(parsed_line)
+                    st.success("🎉 Твой ход успешно добавлен на общую доску!")
+                    st.rerun()
+        except Exception:
+            st.error("❌ Неверный код линии. Убедитесь, что скопировали его полностью.")
+
+    # Кнопка ручной синхронизации
+    st.write("---")
+    if st.button("🔄 Обновить доску (Показать ходы других игроков)", use_container_width=True):
         st.rerun()
