@@ -38,7 +38,7 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.canvas_lines = []  # Список линий. Каждая линия — список точек [{"x":... , "y":...}]
+        self.canvas_lines = []  # Список линий (массивы точек)
 
     def start_new_round(self):
         if not self.themes_pool:
@@ -97,7 +97,7 @@ st.divider()
 if shared_game.round_id == 0 or shared_game.theme is None:
     st.warning("Организатор еще не запустил раунд. Ждем...")
 else:
-    # --- ЗОНА СТАТУСА ---
+    # --- ЗОНА СТАТУСА (Обновление каждые 3 секунды) ---
     @st.fragment(run_every=3)
     def live_status_zone():
         st.subheader(f"Текущий раунд №{shared_game.round_id}")
@@ -127,15 +127,17 @@ else:
 
     st.write("---")
     st.subheader("🖼️ Общая онлайн-доска")
-    st.caption("Нарисуй ОДНУ линию (не отрывая мышку/палец) и нажми кнопку отправки под холстом.")
+    st.caption("Нарисуй одну линию (зажми мышку/палец) и нажми «Отправить мой ход».")
 
-    # Безопасная проверка структуры перед json.dumps
-    if not isinstance(shared_game.canvas_lines, list):
-        shared_game.canvas_lines = []
-    
-    existing_lines_json = json.dumps(shared_game.canvas_lines)
+    # Жесткая очистка и валидация данных перед отправкой в JS
+    cleaned_lines = []
+    for line in shared_game.canvas_lines:
+        if isinstance(line, list) and len(line) >= 2:
+            cleaned_lines.append(line)
+            
+    existing_lines_json = json.dumps(cleaned_lines)
 
-    # HTML5 Canvas, общающийся со Streamlit напрямую через встроенный JS API Message event
+    # Стабильный HTML5 холст. Передает данные через стандартный Input
     custom_canvas_html = f"""
     <div style="text-align: center; font-family: sans-serif;">
         <canvas id="paintCanvas" width="500" height="350" style="border:2px solid #333; background-color:#fff; cursor:crosshair; border-radius:5px; touch-action: none;"></canvas>
@@ -144,15 +146,6 @@ else:
     </div>
 
     <script>
-        // Инициализация связи со Streamlit
-        function sendToStreamlit(data) {{
-            window.parent.postMessage({{
-                isStreamlitMessage: true,
-                type: "streamlit:setComponentValue",
-                value: data
-            }}, "*");
-        }}
-
         const canvas = document.getElementById('paintCanvas');
         const ctx = canvas.getContext('2d');
         const sendBtn = document.getElementById('sendBtn');
@@ -161,13 +154,13 @@ else:
         let currentLine = [];
         const existingLines = {existing_lines_json};
 
-        // Настройки маркера — один строгий цвет для всех
+        // Настройки кисти
         ctx.strokeStyle = "#111111";
         ctx.lineWidth = 4;
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
 
-        // Рендер старых линий пацанов
+        // Отрисовка линий из базы данных
         function drawSavedLines() {{
             existingLines.forEach(line => {{
                 if (!line || line.length < 2) return;
@@ -181,6 +174,7 @@ else:
         }}
         drawSavedLines();
 
+        // Координаты
         function getCoords(e) {{
             const rect = canvas.getBoundingClientRect();
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
@@ -210,39 +204,73 @@ else:
             isDrawing = false;
         }}
 
-        // События мыши
         canvas.addEventListener('mousedown', startDrawing);
         canvas.addEventListener('mousemove', draw);
         window.addEventListener('mouseup', stopDrawing);
 
-        // События тача для мобилок
         canvas.addEventListener('touchstart', startDrawing, {{passive: false}});
         canvas.addEventListener('touchmove', draw, {{passive: false}});
         canvas.addEventListener('touchend', stopDrawing);
 
-        // Кнопка отправки
+        // Отправка через postMessage в родительское окно без перезагрузок
         sendBtn.addEventListener('click', () => {{
             if (currentLine.length < 2) {{
-                alert("Сначала нарисуй хоть одну линию!");
+                alert("Сначала нарисуй линию!");
                 return;
             }}
-            sendToStreamlit(currentLine);
+            window.parent.postMessage({{
+                type: 'streamlit:reportReady',
+                value: JSON.stringify(currentLine)
+            }}, '*');
+            
+            // Визуальный фидбек
+            sendBtn.innerText = "⏳ Передаем ход...";
+            sendBtn.style.backgroundColor = "#ffaa00";
         }});
     </script>
     """
 
-    # Ловим данные из iframe холста без костылей с URL query string
-    # Компонент возвращает значение, отправленное через postMessage
-    canvas_return = st.components.v1.html(custom_canvas_html, height=430)
+    # Создаем скрытый или явный приемник данных в интерфейсе Streamlit
+    # text_input поймает строку из JS, когда сработает событие отправки
+    raw_transport = st.text_input("Системный буфер обмена (не трогать)", key="line_transport_buffer", label_visibility="collapsed")
 
-    # Если с фронтенда пришла новая линия
-    if canvas_return is not None:
-        # Убедимся, что это не дубликат последней отправленной линии
-        if not shared_game.canvas_lines or shared_game.canvas_lines[-1] != canvas_return:
-            shared_game.canvas_lines.append(canvas_return)
-            st.success("Ход засчитан!")
-            st.rerun()
+    # Скрипт-мост, который берет сообщение из iframe холста и аккуратно вставляет в text_input Streamlit
+    st.components.v1.html(custom_canvas_html, height=420)
+    
+    components_js_bridge = """
+    <script>
+    window.addEventListener('message', function(e) {
+        if (e.data && e.data.type === 'streamlit:reportReady') {
+            // Находим текстовое поле ввода Streamlit внутри родительского DOM и пишем туда данные
+            const inputs = window.parent.document.querySelectorAll('input[type="text"]');
+            // Перебираем, ищем наш скрытый буфер
+            for (let input of inputs) {
+                if (input.id && input.id.includes('line_transport_buffer')) {
+                    input.value = e.data.value;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                    break;
+                }
+            }
+        }
+    });
+    </script>
+    """
+    st.components.v1.html(components_js_bridge, height=0)
 
-    # Кнопка ручной синхронизации, чтобы подтянуть рисунки остальных
+    # Если в буфер прилетела строка с точками новой линии
+    if raw_transport:
+        try:
+            new_line_data = json.loads(raw_transport)
+            if new_line_data and (not shared_game.canvas_lines or shared_game.canvas_lines[-1] != new_line_data):
+                shared_game.canvas_lines.append(new_line_data)
+                # Очищаем сессионный буфер, чтобы скрипт не зациклился
+                st.session_state["line_transport_buffer"] = ""
+                st.success("Линия сохранена!")
+                st.rerun()
+        except Exception:
+            pass
+
+    # Кнопка ручной синхронизации для клиентов
     if st.button("🔄 Синхронизировать доску (Показать чужие ходы)", use_container_width=True):
         st.rerun()
