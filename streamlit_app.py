@@ -22,6 +22,25 @@ class GameState:
         self.round_id = 0
         self.roles_pool = []
         self.claimed_count = 0
+        self.themes_pool = []  # Список оставшихся тем для игры
+
+    def start_new_round(self):
+        # Если пул тем пуст, создаем его заново и перемешиваем
+        if not self.themes_pool:
+            self.themes_pool = list(WORDS_BANK.keys())
+            random.shuffle(self.themes_pool)
+        
+        # Достаем тему из перемешанного пула (она удаляется из списка доступных на эту игру)
+        self.theme = self.themes_pool.pop()
+        self.word = random.choice(WORDS_BANK[self.theme])
+        
+        self.round_id += 1
+        self.claimed_count = 0
+        
+        # Ровно 4 роли, шпион всегда один
+        self.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
+        spy_index = random.randint(0, 3)
+        self.roles_pool[spy_index] = "ШПИОН"
 
 @st.cache_resource
 def get_global_game():
@@ -41,24 +60,18 @@ with st.sidebar:
         
         # Кнопка генерации раунда
         if st.button("🔄 Сгенерировать новый раунд", type="primary", use_container_width=True):
-            shared_game.theme = random.choice(list(WORDS_BANK.keys()))
-            shared_game.word = random.choice(WORDS_BANK[shared_game.theme])
-            shared_game.round_id += 1
-            shared_game.claimed_count = 0
-            
-            shared_game.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
-            spy_index = random.randint(0, 3)
-            shared_game.roles_pool[spy_index] = "ШПИОН"
+            shared_game.start_new_round()
             st.success(f"🎉 Раунд №{shared_game.round_id} запущен!")
             
         st.write("---")
-        # Безопасный сброс параметров без вызова внутренних методов класса
+        # Кнопка полного сброса
         if st.button("❌ Сбросить всю игру с нуля", type="secondary", use_container_width=True):
             shared_game.theme = None
             shared_game.word = None
             shared_game.round_id = 0
             shared_game.roles_pool = []
             shared_game.claimed_count = 0
+            shared_game.themes_pool = []  # Обнуляем пул тем при полном сбросе
             st.warning("⚠️ Игра полностью сброшена!")
     else:
         st.caption("Панель только для создателя игры.")
@@ -69,8 +82,7 @@ st.divider()
 @st.fragment(run_every=2)
 def live_game_zone():
     if shared_game.round_id == 0 or shared_game.theme is None:
-        st.warning("Организатор еще не запустил раунд или сбросил игру. Ждем...")
-        # Чистим локальные сессии игроков при сбросе
+        st.warning("Организатор еще не запустил раунд или сбросил игру. Ждем... (обновится автоматически)")
         for key in list(st.session_state.keys()):
             if key.startswith("role_r"):
                 del st.session_state[key]
@@ -87,7 +99,7 @@ def live_game_zone():
                 shared_game.claimed_count += 1
                 st.rerun()
         else:
-            st.error("🛑 Все 4 роли уже разобраны! Ждем новый раунд от админа.")
+            st.error("🛑 Все 4 роли уже разобраны пацанами! Ждем новый раунд от админа.")
     else:
         my_role = st.session_state[role_key]
         show_card = st.checkbox("Показать мою карточку", key=f"show_v_{shared_game.round_id}")
