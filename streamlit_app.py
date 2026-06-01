@@ -2,7 +2,6 @@ import streamlit as st
 import random
 import os
 import json
-from streamlit_drawable_canvas import st_canvas
 
 # Настройка страницы
 st.set_page_config(page_title="Fake Artist Мультиплеер", page_icon="🎨", layout="centered")
@@ -39,7 +38,7 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.canvas_data = None  
+        self.canvas_lines = []  # Храним массивы точек для отрисовки линий
 
     def start_new_round(self):
         if not self.themes_pool:
@@ -50,7 +49,7 @@ class GameState:
         self.word = random.choice(WORDS_BANK[self.theme])
         self.round_id += 1
         self.claimed_count = 0
-        self.canvas_data = None  
+        self.canvas_lines = []  
         
         self.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
         spy_index = random.randint(0, 3)
@@ -63,7 +62,7 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.canvas_data = None
+        self.canvas_lines = []
 
 @st.cache_resource
 def get_global_game():
@@ -71,8 +70,7 @@ def get_global_game():
 
 shared_game = get_global_game()
 
-st.title("🎨 Fake Artist: Живое Обновление")
-st.caption(f"Успешно загружено тем: {len(WORDS_BANK)}")
+st.title("🎨 Fake Artist Мультиплеер")
 
 # Панель ведущего
 with st.sidebar:
@@ -99,7 +97,7 @@ st.divider()
 if shared_game.round_id == 0 or shared_game.theme is None:
     st.warning("Организатор еще не запустил раунд. Ждем...")
 else:
-    # --- Живой статус игроков и ролей (внутри фрагмента, тикает сам) ---
+    # --- ЗОНА СТАТУСА (Обновляется автоматически каждые 3 секунды) ---
     @st.fragment(run_every=3)
     def live_status_zone():
         st.subheader(f"Текущий раунд №{shared_game.round_id}")
@@ -123,62 +121,126 @@ else:
                 else:
                     st.success(f"✏️ ТЫ ХУДОЖНИК! Загаданное слово: **{shared_game.word}**")
         
-        st.caption(f"👥 Игроков взяли роли: {shared_game.claimed_count} из 4")
+        st.caption(f"👥 Взяли роли: {shared_game.claimed_count} из 4")
 
     live_status_zone()
 
     st.write("---")
-    st.subheader("🖼️ Общая онлайн доска")
-    st.caption("Сделай свой ход (нарисуй линию). Нажми кнопку отправки, чтобы её увидели остальные.")
+    st.subheader("🖼️ Общая онлайн-доска")
+    st.caption("Нарисуй одну линию (зажми мышку/палец) и нажми «Отправить ход».")
 
-    # Базовые настройки холста
-    canvas_kwargs = {
-        "fill_color": "rgba(255, 165, 0, 0.3)",
-        "stroke_width": 4,
-        "stroke_color": "#000000",
-        "background_color": "#FFFFFF",
-        "update_vis_cycle": False,
-        "height": 400,
-        "width": 500,
-        "drawing_mode": "freedraw",
-        # Динамический ключ раунда, чтобы холст гарантированно очищался в новом раунде
-        "key": f"canvas_round_{shared_game.round_id}" 
-    }
-
-    # Если в глобальном состоянии РЕАЛЬНО есть сохраненные линии, передаем их
-    if shared_game.canvas_data is not None:
+    # Обработка входящих данных от HTML5 Canvas через query параметры
+    query_params = st.query_params
+    if "new_line" in query_params:
         try:
-            if isinstance(shared_game.canvas_data, dict):
-                canvas_kwargs["initial_drawing"] = shared_game.canvas_data
-            elif isinstance(shared_game.canvas_data, str) and shared_game.canvas_data.strip():
-                canvas_kwargs["initial_drawing"] = json.loads(shared_game.canvas_data)
-        except Exception:
-            pass  # При любой ошибке парсинга не передаем ничего, чтобы не свалить виджет
-
-    # Жесткий try-except блок на случай любых капризов React-компонента
-    canvas_result = None
-    try:
-        canvas_result = st_canvas(**canvas_kwargs)
-    except Exception as e:
-        st.error("⚠️ Произошел сбой виджета холста. Пожалуйста, обновите страницу кнопки ниже.")
-        if st.button("🔄 Принудительно обновить доску", type="secondary"):
+            raw_line = query_params["new_line"]
+            line_data = json.loads(raw_line)
+            if line_data and line_data not in shared_game.canvas_lines:
+                shared_game.canvas_lines.append(line_data)
+            # Очищаем параметры из URL, чтобы не дублировать линии при обновлении страницы
+            st.query_params.clear()
             st.rerun()
+        except Exception:
+            pass
 
-    # Интерфейс отправки ходов
-    if canvas_result is not None and canvas_result.json_data is not None:
-        # Проверяем, нарисовал ли пользователь хоть что-то
-        current_objects = canvas_result.json_data.get("objects", [])
+    # Сериализуем уже существующие линии, чтобы HTML-холст их отобразил
+    existing_lines_json = json.dumps(shared_game.canvas_lines)
+
+    # Встроенный HTML5 Canvas на чистом JS
+    custom_canvas_html = f"""
+    <div style="text-align: center; font-family: sans-serif;">
+        <canvas id="paintCanvas" width="500" height="350" style="border:2px solid #333; background-color:#fff; cursor:crosshair; border-radius:5px;"></canvas>
+        <br><br>
+        <button id="sendBtn" style="background-color: #ff4b4b; color: white; border: none; padding: 10px 20px; font-size: 16px; border-radius: 5px; cursor: pointer; width: 100%;">📤 Отправить мой ход</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('paintCanvas');
+        const ctx = canvas.getContext('2d');
+        const sendBtn = document.getElementById('sendBtn');
         
-        # Кнопки под холстом
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("🔄 Синхронизировать рисунки (Обновить)", use_container_width=True):
-                st.rerun()
-                
-        with col2:
-            # Показываем кнопку отправки только если на доске физически есть линии
-            if current_objects:
-                if st.button("📤 Отправить мой ход", type="primary", use_container_width=True):
-                    shared_game.canvas_data = canvas_result.json_data
-                    st.success("Твой ход успешно отправлен пацанам!")
-                    st.rerun()
+        let isDrawing = false;
+        let currentLine = [];
+        const existingLines = {existing_lines_json};
+
+        // Настройки кисти (один цвет для всех)
+        ctx.strokeStyle = "#222222";
+        ctx.lineWidth = 4;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+
+        // Рисуем уже сохраненные ранее линии пацанов
+        function drawSavedLines() {{
+            existingLines.forEach(line => {{
+                if (line.length < 2) return;
+                ctx.beginPath();
+                ctx.moveTo(line[0].x, line[0].y);
+                for (let i = 1; i < line.length; i++) {{
+                    ctx.lineTo(line[i].x, line[i].y);
+                }}
+                ctx.stroke();
+            }});
+        }}
+        drawSavedLines();
+
+        // Логика рисования новой линии
+        function getCoords(e) {{
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            return {{ x: clientX - rect.left, y: clientY - rect.top }};
+        }}
+
+        function startDrawing(e) {{
+            isDrawing = true;
+            currentLine = [];
+            const coords = getCoords(e);
+            currentLine.push(coords);
+            ctx.beginPath();
+            ctx.moveTo(coords.x, coords.y);
+        }}
+
+        function draw(e) {{
+            if (!isDrawing) return;
+            e.preventDefault();
+            const coords = getCoords(e);
+            currentLine.push(coords);
+            ctx.lineTo(coords.x, coords.y);
+            ctx.stroke();
+        }}
+
+        function stopDrawing() {{
+            isDrawing = false;
+        }}
+
+        // Мышь
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        window.addEventListener('mouseup', stopDrawing);
+
+        // Тачпад / Смартфоны
+        canvas.addEventListener('touchstart', startDrawing, {{passive: false}});
+        canvas.addEventListener('touchmove', draw, {{passive: false}});
+        canvas.addEventListener('touchend', stopDrawing);
+
+        // Отправка хода в Streamlit через перезапись query параметров окна
+        sendBtn.addEventListener('click', () => {{
+            if (currentLine.length < 2) {{
+                alert("Сначала нарисуй линию!");
+                return;
+            }}
+            const dataStr = JSON.stringify(currentLine);
+            // Передаем данные наверх родителю (в Streamlit)
+            const url = new URL(window.parent.location.href);
+            url.searchParams.set("new_line", dataStr);
+            window.parent.location.href = url.href;
+        }});
+    </script>
+    """
+
+    # Рендерим безопасный HTML-компонент холста
+    st.components.v1.html(custom_canvas_html, height=430)
+
+    # Кнопка ручного обновления, чтобы стянуть ходы других игроков
+    if st.button("🔄 Синхронизировать доску (Подтянуть чужие ходы)", use_container_width=True):
+        st.rerun()
