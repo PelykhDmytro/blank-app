@@ -39,7 +39,7 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.all_strokes = []  # Храним список линий (объектов) рисунка
+        self.all_strokes = []  # Список чистых Python-словарей (линий)
 
     def start_new_round(self):
         if not self.themes_pool:
@@ -98,8 +98,8 @@ st.divider()
 if shared_game.round_id == 0 or shared_game.theme is None:
     st.warning("Организатор еще не запустил раунд. Ждем...")
 else:
-    # --- ЗОНА СТАТУСА (Авто-обновление раз в 3 секунды) ---
-    @st.fragment(run_every=3)
+    # --- ЗОНА СТАТУСА (Раз в 4 секунды проверяем роли) ---
+    @st.fragment(run_every=4)
     def live_status_zone():
         st.subheader(f"Текущий раунд №{shared_game.round_id}")
         role_key = f"role_r{shared_game.round_id}"
@@ -128,46 +128,57 @@ else:
 
     st.write("---")
     st.subheader("🖼️ Общая онлайн-доска")
-    st.caption("Сделай свой ход (нарисуй ОДНУ линию) и нажми кнопку ниже, чтобы отправить её остальным:")
+    st.caption("Нарисуй **одну непрерывную линию** и нажми кнопку ниже:")
 
-    # Формируем текущее состояние холста из сохраненных на сервере линий
-    initial_drawing = {"objects": shared_game.all_strokes, "background": ""}
+    # Безопасная подготовка JSON строк перед отправкой в JavaScript-компонент холста
+    try:
+        clean_strokes = json.loads(json.dumps(shared_game.all_strokes))
+        initial_drawing = {"objects": clean_strokes, "background": ""}
+    except Exception:
+        initial_drawing = {"objects": [], "background": ""}
 
-    # Конфигурация официального виджета холста
-    canvas_result = st_canvas(
-        fill_color="rgba(255, 165, 0, 0)",
-        stroke_width=4,
-        stroke_color="#111111",
-        background_color="#ffffff",
-        height=350,
-        width=500,
-        drawing_mode="freedraw",
-        initial_drawing=initial_drawing,
-        update_streamlit=True,
-        key=f"canvas_classic_r{shared_game.round_id}"
-    )
+    # Заворачиваем холст в безопасный try-блок, чтобы избежать аварийного завершения сессии
+    try:
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 165, 0, 0)",
+            stroke_width=4,
+            stroke_color="#111111",
+            background_color="#ffffff",
+            height=380,
+            width=500,
+            drawing_mode="freedraw",
+            initial_drawing=initial_drawing,
+            update_streamlit=True,
+            key=f"canvas_classic_r{shared_game.round_id}_v{len(shared_game.all_strokes)}"
+        )
+    except Exception as e:
+        st.error("⚠️ Произошел временный рассинхрон холста при обновлении данных.")
+        if st.button("🔄 Принудительно восстановить доску", type="primary"):
+            st.rerun()
+        canvas_result = None
 
-    st.write("### 📥 Шаг 2: Фиксация линии")
-    if st.button("🚀 Отправить мой ход в игру", type="primary", use_container_width=True):
+    st.write("### 📥 Фиксация хода")
+    if st.button("🚀 Отправить мою линию в игру", type="primary", use_container_width=True):
         if canvas_result is not None and canvas_result.json_data is not None:
             current_objects = canvas_result.json_data.get("objects", [])
             
-            # Проверяем, появилось ли на холсте что-то новое по сравнению с базой данных
             if len(current_objects) > len(shared_game.all_strokes):
-                # Достаем последнюю нарисованную пользователем линию
+                # Забираем только самый последний (новый) штрих игрока
                 new_stroke = current_objects[-1]
                 
-                # Принудительно сериализуем в чистый Python dict, чтобы избежать краша JSON
-                clean_dict = json.loads(json.dumps(new_stroke))
-                
-                shared_game.all_strokes.append(clean_dict)
-                st.success("🎉 Твоя линия успешно улетела на сервер!")
-                st.rerun()
+                # Глубокая очистка объекта в базовые типы Python
+                try:
+                    clean_dict = json.loads(json.dumps(new_stroke))
+                    shared_game.all_strokes.append(clean_dict)
+                    st.success("🎉 Твой ход успешно записан на сервере!")
+                    st.rerun()
+                except Exception as json_err:
+                    st.error(f"Ошибка обработки геометрии линии: {json_err}")
             else:
-                st.warning("👉 Холст чист или изменений нет! Нарисуй линию перед отправкой.")
+                st.warning("👉 Доска не изменилась. Сначала нарисуй линию, а затем отправляй!")
 
-    # Блок синхронизации и статистики
+    # Кнопка ручной синхронизации
     st.write("---")
     st.metric(label="📊 Всего линий нарисовано на доске:", value=len(shared_game.all_strokes))
-    if st.button("🔄 Обновить доску (Показать ходы других игроков)", use_container_width=True):
+    if st.button("🔄 Синхронизировать доску (Показать ходы других игроков)", use_container_width=True):
         st.rerun()
