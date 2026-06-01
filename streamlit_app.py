@@ -1,19 +1,40 @@
 import streamlit as st
 import random
+import os
 
 # Настройка страницы
 st.set_page_config(page_title="Fake Artist Мультиплеер", page_icon="🎨", layout="centered")
 
-# База категорий и слов
-WORDS_BANK = {
-    "Еда 🍔": ["Бургер", "Пицца", "Суши", "Шаурма", "Хот-дог", "Пельмени", "Круассан", "Пончик"],
-    "Музыка 🎸": ["Гитара", "Барабаны", "Пианино", "Скрипка", "Микрофон", "Нота", "Саксофон"],
-    "Животные 🦁": ["Пингвин", "Слон", "Жираф", "Кенгуру", "Акула", "Кот", "Медведь", "Лев"],
-    "Транспорт 🚗": ["Трактор", "Самолет", "Велосипед", "Поезд", "Субмарина", "Вертолет", "Автобус"],
-    "Одежда и Обувь 👟": ["Кроссовки", "Шляпа", "Куртка", "Носки", "Галстук", "Джинсы", "Футболка"]
-}
-
 ADMIN_PASSWORD = "123"
+
+# Функция автоматической загрузки слов из файла
+def load_words_from_file():
+    base_words = {
+        "Еда 🍔": ["Бургер", "Пицца", "Суши", "Шаурма", "Хот-дог"],
+        "Музыка 🎸": ["Гитара", "Барабаны", "Пианино", "Скрипка", "Микрофон"]
+    }
+    filename = "words.txt"
+    
+    if not os.path.exists(filename):
+        return base_words
+        
+    loaded_words = {}
+    try:
+        with open(filename, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or ":" not in line:
+                    continue
+                theme, words_str = line.split(":", 1)
+                words_list = [w.strip() for w in words_str.split(",") if w.strip()]
+                if theme.strip() and words_list:
+                    loaded_words[theme.strip()] = words_list
+        return loaded_words if loaded_words else base_words
+    except Exception:
+        return base_words
+
+# Загружаем базу слов (вызовется один раз при старте сервера)
+WORDS_BANK = load_words_from_file()
 
 class GameState:
     def __init__(self):
@@ -22,22 +43,21 @@ class GameState:
         self.round_id = 0
         self.roles_pool = []
         self.claimed_count = 0
-        self.themes_pool = []  # Список оставшихся тем для игры
+        self.themes_pool = []
 
     def start_new_round(self):
-        # Если пул тем пуст, создаем его заново и перемешиваем
+        # Перемешиваем темы, если пул пуст
         if not self.themes_pool:
             self.themes_pool = list(WORDS_BANK.keys())
             random.shuffle(self.themes_pool)
         
-        # Достаем тему из перемешанного пула (она удаляется из списка доступных на эту игру)
         self.theme = self.themes_pool.pop()
+        # Выбираем случайное слово из загруженной темы
         self.word = random.choice(WORDS_BANK[self.theme])
         
         self.round_id += 1
         self.claimed_count = 0
         
-        # Ровно 4 роли, шпион всегда один
         self.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
         spy_index = random.randint(0, 3)
         self.roles_pool[spy_index] = "ШПИОН"
@@ -48,9 +68,10 @@ def get_global_game():
 
 shared_game = get_global_game()
 
-st.title("🎨 Fake Artist: Живое Обновление")
+st.title("🎨 Fake Artist: Мега-База Слов")
+st.caption(f"Загружено тем из файла words.txt: {len(WORDS_BANK)}")
 
-# Панель ведущего в боковой панели
+# Панель ведущего
 with st.sidebar:
     st.header("⚙️ Панель ведущего")
     pass_input = st.text_input("Введите пароль:", type="password")
@@ -58,20 +79,18 @@ with st.sidebar:
     if pass_input == ADMIN_PASSWORD:
         st.success("Доступ разрешен!")
         
-        # Кнопка генерации раунда
         if st.button("🔄 Сгенерировать новый раунд", type="primary", use_container_width=True):
             shared_game.start_new_round()
             st.success(f"🎉 Раунд №{shared_game.round_id} запущен!")
             
         st.write("---")
-        # Кнопка полного сброса
         if st.button("❌ Сбросить всю игру с нуля", type="secondary", use_container_width=True):
             shared_game.theme = None
             shared_game.word = None
             shared_game.round_id = 0
             shared_game.roles_pool = []
             shared_game.claimed_count = 0
-            shared_game.themes_pool = []  # Обнуляем пул тем при полном сбросе
+            shared_game.themes_pool = []
             st.warning("⚠️ Игра полностью сброшена!")
     else:
         st.caption("Панель только для создателя игры.")
@@ -82,14 +101,13 @@ st.divider()
 @st.fragment(run_every=2)
 def live_game_zone():
     if shared_game.round_id == 0 or shared_game.theme is None:
-        st.warning("Организатор еще не запустил раунд или сбросил игру. Ждем... (обновится автоматически)")
+        st.warning("Организатор еще не запустил раунд или сбросил игру. Ждем...")
         for key in list(st.session_state.keys()):
             if key.startswith("role_r"):
                 del st.session_state[key]
         return
 
     st.subheader(f"Текущий раунд №{shared_game.round_id}")
-    
     role_key = f"role_r{shared_game.round_id}"
     
     if role_key not in st.session_state:
