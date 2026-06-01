@@ -13,13 +13,16 @@ WORDS_BANK = {
     "Одежда и Обувь 👟": ["Кроссовки", "Шляпа", "Куртка", "Носки", "Галстук", "Джинсы", "Футболка"]
 }
 
+# Твой личный секретный пароль для управления игрой (можешь поменять на свой)
+ADMIN_PASSWORD = "123"
+
 class GameState:
     def __init__(self):
         self.theme = None
         self.word = None
         self.round_id = 0
-        self.roles_pool = []  # Очередь ролей (перемешанная)
-        self.claimed_count = 0  # Сколько игроков уже забрали роль
+        self.roles_pool = []
+        self.claimed_count = 0
 
     def start_new_round(self):
         self.theme = random.choice(list(WORDS_BANK.keys()))
@@ -27,7 +30,7 @@ class GameState:
         self.round_id += 1
         self.claimed_count = 0
         
-        # Создаем пул ролей для 4-х игроков и намертво его перемешиваем
+        # Генерируем пул ролей на 4 игрока
         self.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
         spy_index = random.randint(0, 3)
         self.roles_pool[spy_index] = "ШПИОН"
@@ -38,55 +41,50 @@ def get_global_game():
 
 shared_game = get_global_game()
 
-st.title("🎨 Fake Artist: Авто-Раздача по очереди")
-st.write("Просто заходите по ссылке и по очереди берите карточки!")
+st.title("🎨 Fake Artist: Онлайн Раздача")
 
-# Кнопка перезапуска раунда
-if st.button("🔄 Сгенерировать новый раунд (ДЛЯ ВСЕХ)", type="primary"):
-    shared_game.start_new_round()
-    # Очищаем локальную память браузера для нового раунда
-    if "my_assigned_role" in st.session_state:
-        del st.session_state["my_assigned_role"]
-    if "my_player_number" in st.session_state:
-        del st.session_state["my_player_number"]
-    st.success(f"🎉 Раунд №{shared_game.round_id} успешно создан! Кнопки ниже обновились.")
+# Секретная панель администратора
+with st.sidebar:
+    st.header("⚙️ Панель ведущего")
+    pass_input = st.text_input("Введите пароль для управления:", type="password")
+    
+    if pass_input == ADMIN_PASSWORD:
+        st.success("Доступ разрешен!")
+        if st.button("🔄 Сгенерировать новый раунд", type="primary"):
+            shared_game.start_new_round()
+            st.success(f"🎉 Раунд №{shared_game.round_id} успешно запущен!")
+    else:
+        st.caption("Панель только для создателя игры.")
 
 st.divider()
 
 if shared_game.theme is not None:
-    st.subheader(f"Раунд №{shared_game.round_id}")
+    st.subheader(f"Текущий раунд №{shared_game.round_id}")
     
-    # Ключ сессии привязываем к ID раунда, чтобы при перезапуске всё сбрасывалось автоматически
-    role_key = f"assigned_role_r{shared_game.round_id}"
-    num_key = f"player_num_r{shared_game.round_id}"
+    role_key = f"role_r{shared_game.round_id}"
     
-    # Если этот конкретный телефон/браузер еще не брал роль в этом раунде
+    # Если этот телефон еще не брал роль
     if role_key not in st.session_state:
         if shared_game.claimed_count < 4:
-            if st.button("👁️ Узнать мою роль (Я зашел по очереди)"):
-                # Присваиваем игроку следующую роль из перемешанного пула
+            if st.button("👁️ Узнать мою роль", use_container_width=True):
                 st.session_state[role_key] = shared_game.roles_pool[shared_game.claimed_count]
                 shared_game.claimed_count += 1
-                st.session_state[num_key] = shared_game.claimed_count
                 st.rerun()
         else:
-            st.error("🛑 Все 4 роли уже разобраны! Если хотите сыграть еще раз, нажмите кнопку сверху.")
+            st.error("🛑 Все 4 роли уже разобраны пацанами! Дождитесь, пока админ запустит новый раунд.")
             
-    # Если роль уже успешно получена этим телефоном
+    # Если роль уже получена
     else:
-        my_num = st.session_state[num_key]
         my_role = st.session_state[role_key]
         
-        st.info(f"👤 Автоматически присвоен: **Игрок №{my_num}**")
-        
-        # Чекбокс, чтобы скрыть/показать код, если передаешь телефон или кто-то смотрит
-        show_card = st.checkbox("Показать мою карточку", key=f"show_card_{shared_game.round_id}")
+        # Сразу чекбокс без лишних надписей про номера
+        show_card = st.checkbox("Показать мою карточку", key=f"show_v_{shared_game.round_id}")
         
         if show_card:
-            st.info(f"📋 Категория раунда: **{shared_game.theme}**")
+            st.info(f"📋 Категория: **{shared_game.theme}**")
             if my_role == "ШПИОН":
-                st.error("🕵️ ТЫ ШПИОН! Ты не знаешь слова. Рисуй аккуратно и коси под художника!")
+                st.error("🕵️ ТЫ ШПИОН! Ты не знаешь слова. Рисуй аккуратно и коси под остальных!")
             else:
                 st.success(f"✏️ ТЫ ХУДОЖНИК! Загаданное слово: **{shared_game.word}**")
 else:
-    st.warning("Игра еще не началась. Кто-нибудь один, нажмите кнопку «Сгенерировать новый раунд» выше.")
+    st.warning("Организатор еще не запустил первый раунд. Ждем...")
