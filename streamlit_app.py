@@ -2,6 +2,7 @@ import streamlit as st
 import random
 import os
 import json
+import base64
 
 # Настройка страницы
 st.set_page_config(page_title="Fake Artist Мультиплеер", page_icon="🎨", layout="centered")
@@ -38,7 +39,7 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.canvas_lines = []  # Список линий (массивы точек)
+        self.canvas_lines = []  # Список всех отправленных линий в раунде
 
     def start_new_round(self):
         if not self.themes_pool:
@@ -81,12 +82,17 @@ with st.sidebar:
         st.success("Доступ разрешен!")
         if st.button("🔄 Сгенерировать новый раунд", type="primary", use_container_width=True):
             shared_game.start_new_round()
+            # Очищаем старые ходы из сессии при смене раунда
+            if "last_processed_code" in st.session_state:
+                del st.session_state["last_processed_code"]
             st.success(f"🎉 Раунд №{shared_game.round_id} запущен!")
             st.rerun()
             
         st.write("---")
         if st.button("❌ Сбросить всю игру с нуля", type="secondary", use_container_width=True):
             shared_game.reset_game_completely()
+            if "last_processed_code" in st.session_state:
+                del st.session_state["last_processed_code"]
             st.success("Игра полностью сброшена!")
             st.rerun()
     else:
@@ -97,7 +103,7 @@ st.divider()
 if shared_game.round_id == 0 or shared_game.theme is None:
     st.warning("Организатор еще не запустил раунд. Ждем...")
 else:
-    # --- ЗОНА СТАТУСА (Авто-обновление у пацанов раз в 3 секунды) ---
+    # --- ЗОНА СТАТУСА (Авто-обновление раз в 3 секунды) ---
     @st.fragment(run_every=3)
     def live_status_zone():
         st.subheader(f"Текущий раунд №{shared_game.round_id}")
@@ -128,14 +134,14 @@ else:
     st.write("---")
     st.subheader("🖼️ Общая онлайн-доска")
 
-    # Переводим существующие линии в JSON
+    # Формируем JSON текущих линий для передачи в JS холста
     cleaned_lines = []
     for line in shared_game.canvas_lines:
         if isinstance(line, list) and len(line) >= 2:
             cleaned_lines.append(line)
     existing_lines_json = json.dumps(cleaned_lines)
 
-    # HTML5 Холст с исправленным вызовом btoa()
+    # HTML5 Холст с защитой от перезагрузки и отрисовкой истории
     custom_canvas_html = f"""
     <div style="text-align: center; font-family: sans-serif; background-color: #f9f9f9; padding: 10px; border-radius: 10px;">
         <canvas id="paintCanvas" width="500" height="350" style="border:2px solid #333; background-color:#fff; cursor:crosshair; border-radius:5px; touch-action: none;"></canvas>
@@ -165,92 +171,4 @@ else:
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
 
-        function drawSavedLines() {{
-            existingLines.forEach(line => {{
-                if (!line || line.length < 2) return;
-                ctx.beginPath();
-                ctx.moveTo(line[0].x, line[0].y);
-                for (let i = 1; i < line.length; i++) {{
-                    ctx.lineTo(line[i].x, line[i].y);
-                }}
-                ctx.stroke();
-            }});
-        }}
-        drawSavedLines();
-
-        function getCoords(e) {{
-            const rect = canvas.getBoundingClientRect();
-            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-            return {{ x: Math.round(clientX - rect.left), y: Math.round(clientY - rect.top) }};
-        }}
-
-        function startDrawing(e) {{
-            isDrawing = true;
-            currentLine = [];
-            const coords = getCoords(e);
-            currentLine.push(coords);
-            ctx.beginPath();
-            ctx.moveTo(coords.x, coords.y);
-        }}
-
-        function draw(e) {{
-            if (!isDrawing) return;
-            e.preventDefault();
-            const coords = getCoords(e);
-            currentLine.push(coords);
-            ctx.lineTo(coords.x, coords.y);
-            ctx.stroke();
-        }}
-
-        canvas.addEventListener('mousedown', startDrawing);
-        canvas.addEventListener('mousemove', draw);
-        window.addEventListener('mouseup', () => isDrawing = false);
-
-        canvas.addEventListener('touchstart', startDrawing, {{passive: false}});
-        canvas.addEventListener('touchmove', draw, {{passive: false}});
-        canvas.addEventListener('touchend', () => isDrawing = false);
-
-        generateBtn.addEventListener('click', () => {{
-            if (currentLine.length < 2) {{
-                alert("Сначала нарисуйте линию на холсте!");
-                return;
-            }}
-            // Фикс: Переводим массив в СТРОКУ перед тем, как кодировать через btoa
-            const jsonStr = JSON.stringify(currentLine);
-            const compressedStr = btoa(unescape(encodeURIComponent(jsonStr)));
-            
-            codeResult.value = compressedStr;
-            outputZone.style.display = "block";
-            generateBtn.innerText = " Код успешно сгенерирован ниже!";
-            generateBtn.style.backgroundColor = "#2ebd59";
-        }});
-    </script>
-    """
-
-    # Выводим холст
-    st.components.v1.html(custom_canvas_html, height=510)
-
-    # Поле ввода Streamlit, куда игрок вставляет сгенерированный код хода
-    st.write("### 📥 Шаг 2: Отправка хода в игру")
-    input_code = st.text_input("Вставьте скопированный код линии сюда и нажмите Enter:", key=f"input_code_r{shared_game.round_id}")
-
-    if input_code:
-        try:
-            import base64
-            # Декодируем строку обратно в массив точек
-            decoded_json = base64.b64decode(input_code).decode('utf-8')
-            parsed_line = json.loads(decoded_json)
-            
-            if parsed_line and isinstance(parsed_line, list):
-                if not shared_game.canvas_lines or shared_game.canvas_lines[-1] != parsed_line:
-                    shared_game.canvas_lines.append(parsed_line)
-                    st.success("🎉 Твой ход успешно добавлен на общую доску!")
-                    st.rerun()
-        except Exception:
-            st.error("❌ Неверный код линии. Убедитесь, что скопировали его полностью.")
-
-    # Кнопка ручной синхронизации
-    st.write("---")
-    if st.button("🔄 Обновить доску (Показать ходы других игроков)", use_container_width=True):
-        st.rerun()
+        // Функция отрисовки всех сохранен
