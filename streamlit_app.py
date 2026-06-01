@@ -135,7 +135,7 @@ else:
             cleaned_lines.append(line)
     existing_lines_json = json.dumps(cleaned_lines)
 
-    # HTML5 Холст, генерирующий строку для вставки
+    # HTML5 Холст с исправленным вызовом btoa()
     custom_canvas_html = f"""
     <div style="text-align: center; font-family: sans-serif; background-color: #f9f9f9; padding: 10px; border-radius: 10px;">
         <canvas id="paintCanvas" width="500" height="350" style="border:2px solid #333; background-color:#fff; cursor:crosshair; border-radius:5px; touch-action: none;"></canvas>
@@ -143,112 +143,4 @@ else:
         <button id="generateBtn" style="background-color: #ff4b4b; color: white; border: none; padding: 12px 20px; font-size: 15px; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold;"> Нажмите сюда, когда закончите линию</button>
         <br><br>
         <div id="outputZone" style="display: none; background: #e3f2fd; padding: 10px; border-radius: 5px; border: 1px dashed #1e88e5;">
-            <span style="font-size: 13px; color: #0d47a1;"> Скопируйте этот код линии:</span>
-            <input id="codeResult" type="text" readonly style="width: 100%; text-align: center; margin: 5px 0; padding: 5px; font-weight: bold;" onclick="this.select();">
-            <span style="font-size: 11px; color: #555;">(Кликните на текст выше, чтобы выделить его, скопируйте и вставьте в поле ввода под холстом)</span>
-        </div>
-    </div>
-
-    <script>
-        const canvas = document.getElementById('paintCanvas');
-        const ctx = canvas.getContext('2d');
-        const generateBtn = document.getElementById('generateBtn');
-        const outputZone = document.getElementById('outputZone');
-        const codeResult = document.getElementById('codeResult');
-        
-        let isDrawing = false;
-        let currentLine = [];
-        const existingLines = {existing_lines_json};
-
-        ctx.strokeStyle = "#111111";
-        ctx.lineWidth = 4;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-
-        function drawSavedLines() {{
-            existingLines.forEach(line => {{
-                if (!line || line.length < 2) return;
-                ctx.beginPath();
-                ctx.moveTo(line[0].x, line[0].y);
-                for (let i = 1; i < line.length; i++) {{
-                    ctx.lineTo(line[i].x, line[i].y);
-                }}
-                ctx.stroke();
-            }});
-        }}
-        drawSavedLines();
-
-        function getCoords(e) {{
-            const rect = canvas.getBoundingClientRect();
-            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-            return {{ x: Math.round(clientX - rect.left), y: Math.round(clientY - rect.top) }};
-        }}
-
-        function startDrawing(e) {{
-            isDrawing = true;
-            currentLine = [];
-            const coords = getCoords(e);
-            currentLine.push(coords);
-            ctx.beginPath();
-            ctx.moveTo(coords.x, coords.y);
-        }}
-
-        function draw(e) {{
-            if (!isDrawing) return;
-            e.preventDefault();
-            const coords = getCoords(e);
-            currentLine.push(coords);
-            ctx.lineTo(coords.x, coords.y);
-            ctx.stroke();
-        }}
-
-        canvas.addEventListener('mousedown', startDrawing);
-        canvas.addEventListener('mousemove', draw);
-        window.addEventListener('mouseup', () => isDrawing = false);
-
-        canvas.addEventListener('touchstart', startDrawing, {{passive: false}});
-        canvas.addEventListener('touchmove', draw, {{passive: false}});
-        canvas.addEventListener('touchend', () => isDrawing = false);
-
-        generateBtn.addEventListener('click', () => {{
-            if (currentLine.length < 2) {{
-                alert("Сначала нарисуйте линию на холсте!");
-                return;
-            }}
-            // Сжимаем массив точек в строку для удобной вставки в инпут
-            const compressedStr = btoa(JSON.stringify(currentLine));
-            codeResult.value = compressedStr;
-            outputZone.style.display = "block";
-            generateBtn.innerText = " Код сгенерирован ниже!";
-            generateBtn.style.backgroundColor = "#2ebd59";
-        }});
-    </script>
-    """
-
-    # Выводим холст
-    st.components.v1.html(custom_canvas_html, height=490)
-
-    # Поле ввода Streamlit, куда игрок вставляет сгенерированный код хода
-    st.write("### 📥 Шаг 2: Отправка хода в игру")
-    input_code = st.text_input("Вставьте скопированный код линии сюда и нажмите Enter:", key=f"input_code_r{shared_game.round_id}")
-
-    if input_code:
-        try:
-            import base64
-            # Декодируем строку обратно в массив точек
-            decoded_json = base64.b64decode(input_code).decode('utf-8')
-            parsed_line = json.loads(decoded_json)
-            
-            if parsed_line and isinstance(parsed_line, list):
-                if not shared_game.canvas_lines or shared_game.canvas_lines[-1] != parsed_line:
-                    shared_game.canvas_lines.append(parsed_line)
-                    st.success("🎉 Твой ход успешно добавлен на общую доску!")
-                    st.rerun()
-        except Exception:
-            st.error("❌ Неверный код линии. Убедитесь, что скопировали его полностью.")
-
-    # Кнопка ручной синхронизации
-    st.write("---")
-    if st.button("🔄 Обновить доску (Показать ходы других игроков)", use_container_width=True):
-        st.rerun()
+            <span style="font-size: 13px; color: #0d
