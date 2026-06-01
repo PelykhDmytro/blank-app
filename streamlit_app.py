@@ -2,7 +2,7 @@ import streamlit as st
 import random
 import os
 import json
-import base64
+from streamlit_canvas import st_canvas
 
 # Настройка страницы
 st.set_page_config(page_title="Fake Artist Мультиплеер", page_icon="🎨", layout="centered")
@@ -10,7 +10,7 @@ st.set_page_config(page_title="Fake Artist Мультиплеер", page_icon="�
 ADMIN_PASSWORD = "123"
 
 def load_words_from_file():
-    base_words = {"Еда 🍔": ["Бургер", "Пицца"]}
+    base_words = {"Еда 🍔": ["Бургер", "Пицца", "Суши", "Кебаб"]}
     filename = "words.txt"
     if not os.path.exists(filename):
         return base_words
@@ -39,7 +39,7 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.canvas_lines = []  # Список всех отправленных линий в раунде
+        self.all_strokes = []  # Храним чистые словари объектов (рисунков)
 
     def start_new_round(self):
         if not self.themes_pool:
@@ -50,7 +50,7 @@ class GameState:
         self.word = random.choice(WORDS_BANK[self.theme])
         self.round_id += 1
         self.claimed_count = 0
-        self.canvas_lines = []  
+        self.all_strokes = []  
         
         self.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
         spy_index = random.randint(0, 3)
@@ -63,7 +63,7 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.canvas_lines = []
+        self.all_strokes = []
 
 @st.cache_resource
 def get_global_game():
@@ -82,17 +82,12 @@ with st.sidebar:
         st.success("Доступ разрешен!")
         if st.button("🔄 Сгенерировать новый раунд", type="primary", use_container_width=True):
             shared_game.start_new_round()
-            # Очищаем старые ходы из сессии при смене раунда
-            if "last_processed_code" in st.session_state:
-                del st.session_state["last_processed_code"]
             st.success(f"🎉 Раунд №{shared_game.round_id} запущен!")
             st.rerun()
             
         st.write("---")
         if st.button("❌ Сбросить всю игру с нуля", type="secondary", use_container_width=True):
             shared_game.reset_game_completely()
-            if "last_processed_code" in st.session_state:
-                del st.session_state["last_processed_code"]
             st.success("Игра полностью сброшена!")
             st.rerun()
     else:
@@ -103,7 +98,7 @@ st.divider()
 if shared_game.round_id == 0 or shared_game.theme is None:
     st.warning("Организатор еще не запустил раунд. Ждем...")
 else:
-    # --- ЗОНА СТАТУСА (Авто-обновление раз в 3 секунды) ---
+    # --- ЗОНА СТАТУСА ---
     @st.fragment(run_every=3)
     def live_status_zone():
         st.subheader(f"Текущий раунд №{shared_game.round_id}")
@@ -134,41 +129,43 @@ else:
     st.write("---")
     st.subheader("🖼️ Общая онлайн-доска")
 
-    # Формируем JSON текущих линий для передачи в JS холста
-    cleaned_lines = []
-    for line in shared_game.canvas_lines:
-        if isinstance(line, list) and len(line) >= 2:
-            cleaned_lines.append(line)
-    existing_lines_json = json.dumps(cleaned_lines)
+    # Пересобираем холст на основе сохраненных объектов линий
+    initial_drawing = {"objects": shared_game.all_strokes, "background": ""}
 
-    # HTML5 Холст с защитой от перезагрузки и отрисовкой истории
-    custom_canvas_html = f"""
-    <div style="text-align: center; font-family: sans-serif; background-color: #f9f9f9; padding: 10px; border-radius: 10px;">
-        <canvas id="paintCanvas" width="500" height="350" style="border:2px solid #333; background-color:#fff; cursor:crosshair; border-radius:5px; touch-action: none;"></canvas>
-        <br><br>
-        <button id="generateBtn" style="background-color: #ff4b4b; color: white; border: none; padding: 12px 20px; font-size: 15px; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold;"> Нажмите сюда, когда закончите линию</button>
-        <br><br>
-        <div id="outputZone" style="display: none; background: #e3f2fd; padding: 10px; border-radius: 5px; border: 1px dashed #1e88e5;">
-            <span style="font-size: 13px; color: #0d47a1;"> Скопируйте этот код линии:</span>
-            <input id="codeResult" type="text" readonly style="width: 100%; text-align: center; margin: 5px 0; padding: 8px; font-weight: bold; background-color: #fff; border: 1px solid #ccc;" onclick="this.select();">
-            <span style="font-size: 11px; color: #555;">(Кликните на текст выше, чтобы выделить его, скопируйте и вставьте в поле ввода под холстом)</span>
-        </div>
-    </div>
+    # Родной и стабильный холст
+    canvas_result = st_canvas(
+        fill_color="rgba(255, 165, 0, 0)",  # Прозрачный фон
+        stroke_width=4,
+        stroke_color="#111111",
+        background_color="#ffffff",
+        height=350,
+        width=500,
+        drawing_mode="freedraw",
+        initial_drawing=initial_drawing,
+        update_ some_data=True,
+        key=f"canvas_classic_r{shared_game.round_id}"
+    )
 
-    <script>
-        const canvas = document.getElementById('paintCanvas');
-        const ctx = canvas.getContext('2d');
-        const generateBtn = document.getElementById('generateBtn');
-        const outputZone = document.getElementById('outputZone');
-        const codeResult = document.getElementById('codeResult');
-        
-        let isDrawing = false;
-        let currentLine = [];
-        const existingLines = {existing_lines_json};
+    st.write("### 📥 Шаг 2: Фиксация линии")
+    if st.button("🚀 Отправить мой ход в игру", type="primary", use_container_width=True):
+        if canvas_result.json_data is not None:
+            current_objects = canvas_result.json_data.get("objects", [])
+            
+            if len(current_objects) > len(shared_game.all_strokes):
+                # Берем только НОВУЮ нарисованную линию
+                new_stroke = current_objects[-1]
+                
+                # Защита от JSON-ошибки: переводим в строку и обратно, получая чистый Python dict
+                clean_dict = json.loads(json.dumps(new_stroke))
+                
+                shared_game.all_strokes.append(clean_dict)
+                st.success("🎉 Линия успешно отправлена на сервер!")
+                st.rerun()
+            else:
+                st.warning("👉 Сначала нарисуй новую линию на холсте перед отправкой!")
 
-        ctx.strokeStyle = "#111111";
-        ctx.lineWidth = 4;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-
-        // Функция отрисовки всех сохранен
+    # Кнопка обновления состояния для других игроков
+    st.write("---")
+    st.metric(label="📊 Всего линий нарисовано:", value=len(shared_game.all_strokes))
+    if st.button("🔄 Обновить доску (Показать ходы других игроков)", use_container_width=True):
+        st.rerun()
