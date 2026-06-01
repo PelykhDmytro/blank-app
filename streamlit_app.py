@@ -2,7 +2,6 @@ import streamlit as st
 import random
 import os
 
-# Настройка страницы
 st.set_page_config(page_title="Fake Artist Мультиплеер", page_icon="🎨", layout="centered")
 
 ADMIN_PASSWORD = "123"
@@ -29,6 +28,7 @@ def load_words_from_file():
 
 WORDS_BANK = load_words_from_file()
 
+# Глобальный класс игры с защитой от пустых атрибутов
 class GameState:
     def __init__(self):
         self.theme = None
@@ -37,7 +37,7 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.current_painter_index = 0
+        self.current_painter = 1  # Заменили сложный индекс на простую переменную
 
     def start_new_round(self):
         if not self.themes_pool:
@@ -48,7 +48,7 @@ class GameState:
         self.word = random.choice(WORDS_BANK[self.theme])
         self.round_id += 1
         self.claimed_count = 0
-        self.current_painter_index = 1
+        self.current_painter = 1
         
         self.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
         spy_index = random.randint(0, 3)
@@ -61,13 +61,17 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.current_painter_index = 0
+        self.current_painter = 1
 
 @st.cache_resource
 def get_global_game():
     return GameState()
 
 shared_game = get_global_game()
+
+# Безопасный перехват на случай, если кэш сервера вернул старый объект без нового свойства
+if not hasattr(shared_game, 'current_painter'):
+    shared_game.current_painter = 1
 
 st.title("🎨 Fake Artist Мультиплеер")
 
@@ -112,7 +116,7 @@ else:
         if show_card:
             st.info(f"📋 Категория: **{shared_game.theme}**")
             if my_role == "ШПИОН":
-                st.error("🕵️ ТЫ ШПИОН! Ты не знаешь слова. Рисуй аккуратно, чтобы тебя не раскусили!")
+                st.error("🕵️ ТЫ ШПИОН! Ты не знаешь слова. Рисуй так, чтобы никто не догадался!")
             else:
                 st.success(f"✏️ ТЫ ХУДОЖНИК! Загаданное слово: **{shared_game.word}**")
     
@@ -122,16 +126,16 @@ else:
     # --- ИГРОВОЙ ПРОЦЕСС ---
     st.subheader("🖼️ Инструкция к игре")
     st.info(
-        "1. Откройте общую доску в новой вкладке (например, [witeboard.com](https://witeboard.com) или [excalidraw.com](https://excalidraw.com)) и скиньте ссылку на неё всем игрокам.\n"
-        "2. Каждый игрок в свой ход рисует на этой доске **ровно одну непрерывную линию**, не отрывая мышку/палец, после чего передает ход."
+        "1. Откройте общую онлайн-доску в новой вкладке (например, [witeboard.com](https://witeboard.com) или [excalidraw.com](https://excalidraw.com)) и отправьте ссылку на неё всем игрокам.\n"
+        "2. Каждый игрок в свой ход рисует на этой доске **ровно одну непрерывную линию**, не отрывая мышку или палец от экрана."
     )
     
     st.write("### ⏱️ Очередь рисования")
-    st.metric(label="Сейчас должен рисовать Игрок №:", value=shared_game.current_painter_index)
+    st.metric(label="Сейчас должен рисовать Игрок №:", value=int(shared_game.current_painter))
     
-    if st.button("✅ Я нарисовал свою линию, передать ход дальше", type="primary", use_container_width=True):
-        if shared_game.current_painter_index < 4:
-            shared_game.current_painter_index += 1
+    if st.button("✅ Я нарисовал линию, передать ход дальше", type="primary", use_container_width=True):
+        if shared_game.current_painter < 4:
+            shared_game.current_painter += 1
         else:
-            shared_game.current_painter_index = 1  # Возврат к первому игроку на второй круг
+            shared_game.current_painter = 1
         st.rerun()
