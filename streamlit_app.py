@@ -3,7 +3,6 @@ import random
 import os
 import json
 from streamlit_canvas import st_canvas
-from PIL import Image, ImageDraw
 
 # Настройка страницы
 st.set_page_config(page_title="Fake Artist Мультиплеер", page_icon="🎨", layout="centered")
@@ -32,6 +31,7 @@ def load_words_from_file():
 
 WORDS_BANK = load_words_from_file()
 
+# Глобальное состояние игры, устойчивое к JSON-сериализации
 class GameState:
     def __init__(self):
         self.theme = None
@@ -40,7 +40,8 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.all_strokes = []  # Список линий для Pillow
+        # Храним холст как чистый валидный JSON-словарь конфигурации Fabric.js
+        self.canvas_data = {"objects": [], "background": "#ffffff"}
 
     def start_new_round(self):
         if not self.themes_pool:
@@ -51,7 +52,7 @@ class GameState:
         self.word = random.choice(WORDS_BANK[self.theme])
         self.round_id += 1
         self.claimed_count = 0
-        self.all_strokes = []  
+        self.canvas_data = {"objects": [], "background": "#ffffff"}
         
         self.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
         spy_index = random.randint(0, 3)
@@ -64,46 +65,13 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.all_strokes = []
+        self.canvas_data = {"objects": [], "background": "#ffffff"}
 
 @st.cache_resource
 def get_global_game():
     return GameState()
 
 shared_game = get_global_game()
-
-# Полностью безопасная функция генерации общего рисунка
-def render_global_board(strokes, width=500, height=380):
-    img = Image.new("RGB", (width, height), "#ffffff")
-    draw = ImageDraw.Draw(img)
-    
-    for stroke in strokes:
-        if not stroke:
-            continue
-            
-        points = []
-        
-        # ЕСЛИ СТРОКА ПРИШЛА КАК СЛОВАРЬ (Стандартный объект Fabric.js)
-        if isinstance(stroke, dict):
-            if stroke.get("type") == "path" and "path" in stroke:
-                path_data = stroke["path"]
-                for cmd in path_data:
-                    if isinstance(cmd, list) and len(cmd) >= 3:
-                        points.append((cmd[-2], cmd[-1]))
-                        
-        # ЕСЛИ СТРОКА ПРИШЛА КАК ПЛОСКИЙ СПИСОК (Защита от AttributeError)
-        elif isinstance(stroke, list):
-            for cmd in stroke:
-                if isinstance(cmd, list) and len(cmd) >= 3:
-                    points.append((cmd[-2], cmd[-1]))
-                elif isinstance(cmd, dict) and "x" in cmd and "y" in cmd:
-                    points.append((cmd["x"], cmd["y"]))
-                    
-        # Рисуем линию, если собрали хотя бы 2 точки
-        if len(points) >= 2:
-            draw.line(points, fill="#111111", width=4, joint="round")
-            
-    return img
 
 st.title("🎨 Fake Artist Мультиплеер")
 
@@ -162,55 +130,51 @@ else:
 
     st.write("---")
     
-    # --- 1. ВЫВОД ТЕКУЩЕЙ ОБЩЕЙ КАРТИНЫ ---
-    st.subheader("🖼️ Актуальная общая доска")
-    st.caption("Ниже показано то, что уже нарисовано всеми игроками на данный момент:")
-    
-    board_image = render_global_board(shared_game.all_strokes)
-    st.image(board_image, use_container_width=True)
-    
-    if st.button("🔄 Обновить доску (Посмотреть чужие ходы)", use_container_width=True):
-        st.rerun()
+    # --- ИГРОВОЙ ХОЛСТ ---
+    st.subheader("🖼️ Общая онлайн-доска")
+    st.caption("Нарисуй ОДНУ линию и нажми кнопку «Отправить ход» под холстом.")
 
-    st.write("---")
-
-    # --- 2. ЗОНА ДЛЯ СВОЕГО ХОДА (ВСЕГДА ЧИСТЫЙ ХОЛСТ) ---
-    st.subheader("✏️ Твой холст для нового хода")
-    st.caption("Нарисуй одну новую линию на белом поле ниже и нажми кнопку отправки:")
-
-    canvas_user_key = f"user_canvas_r{shared_game.round_id}_stroke{st.session_state.get('my_last_stroke_idx', 0)}"
+    # Динамический ключ для принудительного обновления холста при изменении данных на сервере
+    lines_count = len(shared_game.canvas_data["objects"])
+    canvas_key = f"global_canvas_r{shared_game.round_id}_l{lines_count}"
 
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0)",
         stroke_width=4,
         stroke_color="#111111",
         background_color="#ffffff",
-        height=380,
+        height=400,
         width=500,
         drawing_mode="freedraw",
-        initial_drawing={"objects": [], "background": ""},
+        initial_drawing=shared_game.canvas_data,
         update_streamlit=True,
-        key=canvas_user_key
+        key=canvas_key
     )
 
-    st.write("### 📥 Фиксация хода")
-    if st.button("🚀 Отправить мою линию в игру", type="primary", use_container_width=True):
-        if canvas_result is not None and canvas_result.json_data is not None:
-            user_objects = canvas_result.json_data.get("objects", [])
-            
-            if len(user_objects) > 0:
-                new_stroke = user_objects[-1]
-                try:
-                    clean_dict = json.loads(json.dumps(new_stroke))
-                    shared_game.all_strokes.append(clean_dict)
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("🚀 Отправить мой ход", type="primary", use_container_width=True):
+            if canvas_result is not None and canvas_result.json_data is not None:
+                client_objects = canvas_result.json_data.get("objects", [])
+                server_objects = shared_game.canvas_data.get("objects", [])
+                
+                if len(client_objects) > len(server_objects):
+                    # Берем строго новые нарисованные линии
+                    new_strokes = client_objects[len(server_objects):]
+                    for stroke in new_strokes:
+                        # Глубокое копирование через принудительный дамп строк, защищающее от искажения типов
+                        clean_stroke = json.loads(json.dumps(stroke))
+                        shared_game.canvas_data["objects"].append(clean_stroke)
                     
-                    st.session_state['my_last_stroke_idx'] = st.session_state.get('my_last_stroke_idx', 0) + 1
-                    st.success("🎉 Твой ход успешно добавлен на общую доску!")
+                    st.success("🎉 Ход засчитан!")
                     st.rerun()
-                except Exception as json_err:
-                    st.error(f"Ошибка обработки линии: {json_err}")
-            else:
-                st.warning("👉 Твой холст пуст! Сначала нарисуй линию.")
+                else:
+                    st.warning("👉 Сначала нарисуй новую линию на холсте!")
+                    
+    with col2:
+        if st.button("🔄 Синхронизировать доску", type="secondary", use_container_width=True):
+            st.rerun()
 
     st.write("---")
-    st.metric(label="📊 Всего линий нарисовано в этом раунде:", value=len(shared_game.all_strokes))
+    st.metric(label="📊 Всего линий на доске:", value=lines_count)
