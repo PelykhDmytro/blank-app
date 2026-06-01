@@ -3,6 +3,7 @@ import random
 import os
 import json
 from streamlit_canvas import st_canvas
+from PIL import Image, ImageDraw
 
 # Настройка страницы
 st.set_page_config(page_title="Fake Artist Мультиплеер", page_icon="🎨", layout="centered")
@@ -39,7 +40,7 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.all_strokes = []  # Список чистых Python-словарей (линий)
+        self.all_strokes = []  # Список линий для Pillow
 
     def start_new_round(self):
         if not self.themes_pool:
@@ -71,6 +72,27 @@ def get_global_game():
 
 shared_game = get_global_game()
 
+# Функция генерации общего рисунка на сервере с помощью Pillow
+def render_global_board(strokes, width=500, height=380):
+    # Создаем белый холст
+    img = Image.new("RGB", (width, height), "#ffffff")
+    draw = ImageDraw.Draw(img)
+    
+    # Отрисовываем каждую сохраненную линию
+    for stroke in strokes:
+        if stroke.get("type") == "path" and "path" in stroke:
+            path_data = stroke["path"]
+            # Собираем точки из SVG пути (команды M и Q/L)
+            points = []
+            for cmd in path_data:
+                if len(cmd) >= 3:  # Точки координат всегда в конце команды
+                    points.append((cmd[-2], cmd[-1]))
+            
+            # Если набралось хотя бы 2 точки — рисуем линию
+            if len(points) >= 2:
+                draw.line(points, fill="#111111", width=4, joint="round")
+    return img
+
 st.title("🎨 Fake Artist Мультиплеер")
 
 # Панель ведущего
@@ -98,7 +120,7 @@ st.divider()
 if shared_game.round_id == 0 or shared_game.theme is None:
     st.warning("Организатор еще не запустил раунд. Ждем...")
 else:
-    # --- ЗОНА СТАТУСА (Раз в 4 секунды проверяем роли) ---
+    # --- ЗОНА СТАТУСА (Раз в 4 секунды) ---
     @st.fragment(run_every=4)
     def live_status_zone():
         st.subheader(f"Текущий раунд №{shared_game.round_id}")
@@ -127,58 +149,54 @@ else:
     live_status_zone()
 
     st.write("---")
-    st.subheader("🖼️ Общая онлайн-доска")
-    st.caption("Нарисуй **одну непрерывную линию** и нажми кнопку ниже:")
+    
+    # --- 1. ВЫВОД ТЕКУЩЕЙ ОБЩЕЙ КАРТИНЫ ---
+    st.subheader("🖼️ Актуальная общая доска")
+    st.caption("Ниже показано то, что уже нарисовано всеми игроками на данный момент:")
+    
+    # Рендерим картинку из сохраненных линий
+    board_image = render_global_board(shared_game.all_strokes)
+    st.image(board_image, use_container_width=True)
+    
+    if st.button("🔄 Обновить доску (Посмотреть чужие ходы)", use_container_width=True):
+        st.rerun()
 
-    # Безопасная подготовка JSON строк перед отправкой в JavaScript-компонент холста
-    try:
-        clean_strokes = json.loads(json.dumps(shared_game.all_strokes))
-        initial_drawing = {"objects": clean_strokes, "background": ""}
-    except Exception:
-        initial_drawing = {"objects": [], "background": ""}
+    st.write("---")
 
-    # Заворачиваем холст в безопасный try-блок, чтобы избежать аварийного завершения сессии
-    try:
-        canvas_result = st_canvas(
-            fill_color="rgba(255, 165, 0, 0)",
-            stroke_width=4,
-            stroke_color="#111111",
-            background_color="#ffffff",
-            height=380,
-            width=500,
-            drawing_mode="freedraw",
-            initial_drawing=initial_drawing,
-            update_streamlit=True,
-            key=f"canvas_classic_r{shared_game.round_id}_v{len(shared_game.all_strokes)}"
-        )
-    except Exception as e:
-        st.error("⚠️ Произошел временный рассинхрон холста при обновлении данных.")
-        if st.button("🔄 Принудительно восстановить доску", type="primary"):
-            st.rerun()
-        canvas_result = None
+    # --- 2. ЗОНА ДЛЯ СВОЕГО ХОДА (ВСЕГДА ЧИСТЫЙ ХОЛСТ) ---
+    st.subheader("✏️ Твой холст для нового хода")
+    st.caption("Нарисуй **одну новую линию** на белом поле ниже и нажми кнопку отправки:")
+
+    # Ключ холста меняется ТОЛЬКО при отправке хода текущим пользователем, чтобы очистить поле
+    canvas_user_key = f"user_canvas_r{shared_game.round_id}_stroke{st.session_state.get('my_last_stroke_idx', 0)}"
+
+    canvas_result = st_canvas(
+        fill_color="rgba(255, 165, 0, 0)",
+        stroke_width=4,
+        stroke_color="#111111",
+        background_color="#ffffff",
+        height=380,
+        width=500,
+        drawing_mode="freedraw",
+        initial_drawing={"objects": [], "background": ""}, # Всегда чистый при старте хода!
+        update_streamlit=True,
+        key=canvas_user_key
+    )
 
     st.write("### 📥 Фиксация хода")
     if st.button("🚀 Отправить мою линию в игру", type="primary", use_container_width=True):
         if canvas_result is not None and canvas_result.json_data is not None:
-            current_objects = canvas_result.json_data.get("objects", [])
+            user_objects = canvas_result.json_data.get("objects", [])
             
-            if len(current_objects) > len(shared_game.all_strokes):
-                # Забираем только самый последний (новый) штрих игрока
-                new_stroke = current_objects[-1]
+            if len(user_objects) > 0:
+                # Забираем самую последнюю нарисованную линию
+                new_stroke = user_objects[-1]
                 
-                # Глубокая очистка объекта в базовые типы Python
                 try:
                     clean_dict = json.loads(json.dumps(new_stroke))
                     shared_game.all_strokes.append(clean_dict)
-                    st.success("🎉 Твой ход успешно записан на сервере!")
-                    st.rerun()
-                except Exception as json_err:
-                    st.error(f"Ошибка обработки геометрии линии: {json_err}")
-            else:
-                st.warning("👉 Доска не изменилась. Сначала нарисуй линию, а затем отправляй!")
-
-    # Кнопка ручной синхронизации
-    st.write("---")
-    st.metric(label="📊 Всего линий нарисовано на доске:", value=len(shared_game.all_strokes))
-    if st.button("🔄 Синхронизировать доску (Показать ходы других игроков)", use_container_width=True):
-        st.rerun()
+                    
+                    # Сдвигаем счетчик штрихов пользователя, чтобы очистить его локальный холст
+                    st.session_state['my_last_stroke_idx'] = st.session_state.get('my_last_stroke_idx', 0) + 1
+                    
+                    st.success("🎉
