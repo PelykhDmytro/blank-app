@@ -1,23 +1,18 @@
 import streamlit as st
 import random
 import os
+from streamlit_drawable_canvas import st_canvas
 
 # Настройка страницы
 st.set_page_config(page_title="Fake Artist Мультиплеер", page_icon="🎨", layout="centered")
 
 ADMIN_PASSWORD = "123"
 
-# Функция автоматической загрузки слов из файла
 def load_words_from_file():
-    base_words = {
-        "Еда 🍔": ["Бургер", "Пицца", "Суши", "Шаурма", "Хот-дог"],
-        "Музыка 🎸": ["Гитара", "Барабаны", "Пианино", "Скрипка", "Микрофон"]
-    }
+    base_words = {"Еда 🍔": ["Бургер", "Пицца"]}
     filename = "words.txt"
-    
     if not os.path.exists(filename):
         return base_words
-        
     loaded_words = {}
     try:
         with open(filename, "r", encoding="utf-8") as f:
@@ -33,7 +28,6 @@ def load_words_from_file():
     except Exception:
         return base_words
 
-# Загружаем базу слов
 WORDS_BANK = load_words_from_file()
 
 class GameState:
@@ -44,24 +38,32 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
+        self.canvas_data = None  
 
     def start_new_round(self):
-        # Перемешиваем темы, если пул пуст
         if not self.themes_pool:
             self.themes_pool = list(WORDS_BANK.keys())
             random.shuffle(self.themes_pool)
         
         self.theme = self.themes_pool.pop()
         self.word = random.choice(WORDS_BANK[self.theme])
-        
         self.round_id += 1
         self.claimed_count = 0
+        self.canvas_data = None  
         
-        # ЧЕТКИЙ ФИКС: Изначально ВСЕ четверо — художники
         self.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
-        # И только ОДИН случайный становится шпионом
         spy_index = random.randint(0, 3)
         self.roles_pool[spy_index] = "ШПИОН"
+
+    # Добавляем тот самый метод, который требовала кнопка!
+    def reset_game_completely(self):
+        self.theme = None
+        self.word = None
+        self.round_id = 0
+        self.roles_pool = []
+        self.claimed_count = 0
+        self.themes_pool = []
+        self.canvas_data = None
 
 @st.cache_resource
 def get_global_game():
@@ -70,7 +72,7 @@ def get_global_game():
 shared_game = get_global_game()
 
 st.title("🎨 Fake Artist: Живое Обновление")
-st.caption(f"Загружено тем из файла words.txt: {len(WORDS_BANK)}")
+st.caption(f"Успешно загружено тем: {len(WORDS_BANK)}")
 
 # Панель ведущего
 with st.sidebar:
@@ -79,33 +81,26 @@ with st.sidebar:
     
     if pass_input == ADMIN_PASSWORD:
         st.success("Доступ разрешен!")
-        
         if st.button("🔄 Сгенерировать новый раунд", type="primary", use_container_width=True):
             shared_game.start_new_round()
             st.success(f"🎉 Раунд №{shared_game.round_id} запущен!")
+            st.rerun()
             
         st.write("---")
         if st.button("❌ Сбросить всю игру с нуля", type="secondary", use_container_width=True):
-            shared_game.theme = None
-            shared_game.word = None
-            shared_game.round_id = 0
-            shared_game.roles_pool = []
-            shared_game.claimed_count = 0
-            shared_game.themes_pool = []
-            st.warning("⚠️ Игра полностью сброшена!")
+            shared_game.reset_game_completely()
+            st.success("Игра полностью сброшена!")
+            st.rerun()
     else:
         st.caption("Панель только для создателя игры.")
 
 st.divider()
 
-# Спец-фрагмент для живого обновления раз в 2 секунды
-@st.fragment(run_every=2)
+# Автообновление зоны игры каждые 3 секунды
+@st.fragment(run_every=3)
 def live_game_zone():
     if shared_game.round_id == 0 or shared_game.theme is None:
-        st.warning("Организатор еще не запустил раунд или сбросил игру. Ждем...")
-        for key in list(st.session_state.keys()):
-            if key.startswith("role_r"):
-                del st.session_state[key]
+        st.warning("Организатор еще не запустил раунд. Ждем...")
         return
 
     st.subheader(f"Текущий раунд №{shared_game.round_id}")
@@ -118,16 +113,41 @@ def live_game_zone():
                 shared_game.claimed_count += 1
                 st.rerun()
         else:
-            st.error("🛑 Все 4 роли уже разобраны пацанами! Ждем новый раунд от админа.")
+            st.error("🛑 Все роли разобраны пацанами!")
     else:
         my_role = st.session_state[role_key]
         show_card = st.checkbox("Показать мою карточку", key=f"show_v_{shared_game.round_id}")
-        
         if show_card:
             st.info(f"📋 Категория: **{shared_game.theme}**")
             if my_role == "ШПИОН":
                 st.error("🕵️ ТЫ ШПИОН! Ты не знаешь слова. Рисуй аккуратно!")
             else:
                 st.success(f"✏️ ТЫ ХУДОЖНИК! Загаданное слово: **{shared_game.word}**")
+
+    st.write("---")
+    st.subheader("🖼️ Общая онлайн доска")
+    st.caption("Сделай свой ход (нарисуй одну линию) и нажми кнопку ниже, чтобы отправить её остальным:")
+
+    # Настройки холста
+    canvas_result = st_canvas(
+        fill_color="rgba(255, 165, 0, 0.3)",
+        stroke_width=4,
+        stroke_color="#000000",
+        background_color="#FFFFFF",
+        initial_drawing=shared_game.canvas_data, 
+        update_vis_cycle=True,
+        height=400,
+        width=500,
+        drawing_mode="freedraw",
+        key=f"canvas_zone_{shared_game.round_id}"
+    )
+
+    # Синхронизация рисунка
+    if canvas_result.json_data is not None:
+        if canvas_result.json_data != shared_game.canvas_data:
+            if st.button("📤 Отправить мою линию на доску", type="primary", use_container_width=True):
+                shared_game.canvas_data = canvas_result.json_data
+                st.success("Линия зафиксирована!")
+                st.rerun()
 
 live_game_zone()
