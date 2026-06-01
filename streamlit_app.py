@@ -128,18 +128,21 @@ def live_game_zone():
     st.subheader("🖼️ Общая онлайн доска")
     st.caption("Сделай свой ход (нарисуй одну линию) и нажми кнопку ниже, чтобы отправить её остальным:")
 
+    # Подготавливаем данные для холста: если там None, плагин ждет пустую строку или пустой словарь
+    init_draw = shared_game.canvas_data if shared_game.canvas_data is not None else ""
+
     # Настройки холста
     canvas_result = st_canvas(
         fill_color="rgba(255, 165, 0, 0.3)",
         stroke_width=4,
         stroke_color="#000000",
         background_color="#FFFFFF",
-        initial_drawing=shared_game.canvas_data, 
+        initial_drawing=init_draw, # Передаем безопасное значение вместо None
         update_vis_cycle=True,
         height=400,
         width=500,
         drawing_mode="freedraw",
-        key=f"canvas_zone_{shared_game.round_id}"
+        key="global_canvas_widget" # Статичный ключ, чтобы компонент не пересоздавался каждые 3 секунды
     )
 
     # Синхронизация рисунка
