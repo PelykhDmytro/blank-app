@@ -1,8 +1,6 @@
 import streamlit as st
 import random
 import os
-import json
-import streamlit.components.v1 as components
 
 # Настройка страницы
 st.set_page_config(page_title="Fake Artist Мультиплеер", page_icon="🎨", layout="centered")
@@ -31,7 +29,6 @@ def load_words_from_file():
 
 WORDS_BANK = load_words_from_file()
 
-# Стабильное хранилище данных без сложных объектов
 class GameState:
     def __init__(self):
         self.theme = None
@@ -40,7 +37,7 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.canvas_lines = []  # Храним линии как чистые списки точек
+        self.current_painter_index = 0
 
     def start_new_round(self):
         if not self.themes_pool:
@@ -51,7 +48,7 @@ class GameState:
         self.word = random.choice(WORDS_BANK[self.theme])
         self.round_id += 1
         self.claimed_count = 0
-        self.canvas_lines = []
+        self.current_painter_index = 1
         
         self.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
         spy_index = random.randint(0, 3)
@@ -64,7 +61,7 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.canvas_lines = []
+        self.current_painter_index = 0
 
 @st.cache_resource
 def get_global_game():
@@ -91,172 +88,50 @@ with st.sidebar:
             shared_game.reset_game_completely()
             st.success("Игра полностью сброшена!")
             st.rerun()
-    else:
-        st.caption("Панель только для создателя игры.")
 
 st.divider()
 
 if shared_game.round_id == 0 or shared_game.theme is None:
     st.warning("Организатор еще не запустил раунд. Ждем...")
 else:
-    # --- ЗОНА СТАТУСА ---
-    @st.fragment(run_every=4)
-    def live_status_zone():
-        st.subheader(f"Текущий раунд №{shared_game.round_id}")
-        role_key = f"role_r{shared_game.round_id}"
-        
-        if role_key not in st.session_state:
-            if shared_game.claimed_count < 4:
-                if st.button("👁️ Узнать мою роль", use_container_width=True):
-                    st.session_state[role_key] = shared_game.roles_pool[shared_game.claimed_count]
-                    shared_game.claimed_count += 1
-                    st.rerun()
-            else:
-                st.error("🛑 Все роли разобраны!")
-        else:
-            my_role = st.session_state[role_key]
-            show_card = st.checkbox("Показать мою карточку", key=f"show_v_{shared_game.round_id}")
-            if show_card:
-                st.info(f"📋 Категория: **{shared_game.theme}**")
-                if my_role == "ШПИОН":
-                    st.error("🕵️ ТЫ ШПИОН! Ты не знаешь слова. Рисуй аккуратно!")
-                else:
-                    st.success(f"✏️ ТЫ ХУДОЖНИК! Загаданное слово: **{shared_game.word}**")
-        
-        st.caption(f"👥 Взяли роли: {shared_game.claimed_count} из 4")
-
-    live_status_zone()
-
-    st.write("---")
+    # --- ЗОНА РОЛЕЙ ---
+    st.subheader(f"🔷 Раунд №{shared_game.round_id}")
+    role_key = f"role_r{shared_game.round_id}"
     
-    # --- ИГРОВОЙ ХОЛСТ ---
-    st.subheader("🖼️ Общая онлайн-доска")
-    st.caption("Нарисуй одну непрерывную линию. После этого внизу появится кнопка отправки.")
-
-    # Кодируем текущие линии в строку, чтобы передать без конфликтов синтаксиса
-    existing_lines_str = json.dumps(shared_game.canvas_lines)
-
-    # Чистый HTML код БЕЗ f-строки (символы { } больше не вызовут SyntaxError!)
-    custom_canvas_html = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <style>
-            body { margin: 0; padding: 0; display: flex; flex-direction: column; align-items: center; }
-            canvas { border: 2px solid #333; border-radius: 8px; background: #ffffff; cursor: crosshair; touch-action: none; }
-        </style>
-    </head>
-    <body>
-        <div id="serverData" style="display:none;"></div>
-        
-        <canvas id="paintCanvas" width="500" height="380"></canvas>
-
-        <script>
-            const canvas = document.getElementById('paintCanvas');
-            const ctx = canvas.getContext('2d');
-            
-            ctx.lineWidth = 4;
-            ctx.lineCap = 'round';
-            ctx.lineJoin = 'round';
-            ctx.strokeStyle = '#111111';
-
-            // Безопасно парсим старые линии
-            try {
-                const dataDiv = document.getElementById('serverData');
-                const serverLines = JSON.parse(dataDiv.innerText || "[]");
-                serverLines.forEach(line => {
-                    if (line.length < 2) return;
-                    ctx.beginPath();
-                    ctx.moveTo(line[0].x, line[0].y);
-                    for (let i = 1; i < line.length; i++) {
-                        ctx.lineTo(line[i].x, line[i].y);
-                    }
-                    ctx.stroke();
-                });
-            } catch(e) { console.error(e); }
-
-            let isPainting = false;
-            let currentLine = [];
-            let drawn = false;
-
-            function getPos(e) {
-                const rect = canvas.getBoundingClientRect();
-                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-                return { x: clientX - rect.left, y: clientY - rect.top };
-            }
-
-            function startDraw(e) {
-                if (drawn) return;
-                isPainting = true;
-                const pos = getPos(e);
-                currentLine = [pos];
-                ctx.beginPath();
-                ctx.moveTo(pos.x, pos.y);
-            }
-
-            function draw(e) {
-                if (!isPainting) return;
-                const pos = getPos(e);
-                currentLine.push(pos);
-                ctx.lineTo(pos.x, pos.y);
-                ctx.stroke();
-            }
-
-            function stopDraw() {
-                if (!isPainting) return;
-                isPainting = false;
-                if (currentLine.length >= 2) {
-                    drawn = true;
-                    // Передаем массив точек обратно в родительский Streamlit
-                    window.parent.postMessage({
-                        type: 'streamlit:setComponentValue',
-                        value: JSON.stringify(currentLine)
-                    }, '*');
-                }
-            }
-
-            canvas.addEventListener('mousedown', startDraw);
-            canvas.addEventListener('mousemove', draw);
-            window.addEventListener('mouseup', stopDraw);
-
-            canvas.addEventListener('touchstart', startDraw);
-            canvas.addEventListener('touchmove', draw);
-            canvas.addEventListener('touchend', stopDraw);
-        </script>
-    </body>
-    </html>
-    """
-
-    # Динамически внедряем наши линии в скрытый блок текста перед рендерингом компонента
-    html_with_data = custom_canvas_html.replace(
-        '<div id="serverData" style="display:none;"></div>',
-        f'<div id="serverData" style="display:none;">{existing_lines_str}</div>'
-    )
-
-    # Генерируем уникальный ключ, чтобы при изменении количества линий холст перерисовывался у всех
-    canvas_key = f"html5_canvas_r{shared_game.round_id}_v{len(shared_game.canvas_lines)}"
-    
-    # Запускаем компонент, он вернет строку-JSON новой линии, когда юзер закончит рисовать
-    drawn_line_json = components.html(html_with_data, height=395, key=canvas_key)
-
-    # --- КНОПКА ОТПРАВКИ ХОДА ---
-    st.write("### 📥 Шаг 2: Фиксация хода")
-    
-    if drawn_line_json:
-        if st.button("🚀 Отправить мою линию на доску", type="primary", use_container_width=True):
-            try:
-                new_line_points = json.loads(drawn_line_json)
-                shared_game.canvas_lines.append(new_line_points)
-                st.success("🎉 Линия успешно отправлена!")
+    if role_key not in st.session_state:
+        if shared_game.claimed_count < 4:
+            if st.button("👁️ Узнать мою роль", use_container_width=True):
+                st.session_state[role_key] = shared_game.roles_pool[shared_game.claimed_count]
+                shared_game.claimed_count += 1
                 st.rerun()
-            except Exception as err:
-                st.error(f"Ошибка сохранения: {err}")
+        else:
+            st.error("🛑 Все роли разобраны!")
     else:
-        st.info("Проведи линию на холсте выше, чтобы появилась кнопка подтверждения хода.")
-
-    if st.button("🔄 Синхронизировать доску (Обновить рисунки других)", use_container_width=True):
-        st.rerun()
-
+        my_role = st.session_state[role_key]
+        show_card = st.checkbox("Показать мою карточку", key=f"show_v_{shared_game.round_id}")
+        if show_card:
+            st.info(f"📋 Категория: **{shared_game.theme}**")
+            if my_role == "ШПИОН":
+                st.error("🕵️ ТЫ ШПИОН! Ты не знаешь слова. Рисуй аккуратно, чтобы тебя не раскусили!")
+            else:
+                st.success(f"✏️ ТЫ ХУДОЖНИК! Загаданное слово: **{shared_game.word}**")
+    
+    st.caption(f"👥 Взяли роли: {shared_game.claimed_count} из 4")
     st.write("---")
-    st.metric(label="📊 Всего линий нарисовано на доске:", value=len(shared_game.canvas_lines))
+    
+    # --- ИГРОВОЙ ПРОЦЕСС ---
+    st.subheader("🖼️ Инструкция к игре")
+    st.info(
+        "1. Откройте общую доску в новой вкладке (например, [witeboard.com](https://witeboard.com) или [excalidraw.com](https://excalidraw.com)) и скиньте ссылку на неё всем игрокам.\n"
+        "2. Каждый игрок в свой ход рисует на этой доске **ровно одну непрерывную линию**, не отрывая мышку/палец, после чего передает ход."
+    )
+    
+    st.write("### ⏱️ Очередь рисования")
+    st.metric(label="Сейчас должен рисовать Игрок №:", value=shared_game.current_painter_index)
+    
+    if st.button("✅ Я нарисовал свою линию, передать ход дальше", type="primary", use_container_width=True):
+        if shared_game.current_painter_index < 4:
+            shared_game.current_painter_index += 1
+        else:
+            shared_game.current_painter_index = 1  # Возврат к первому игроку на второй круг
+        st.rerun()
