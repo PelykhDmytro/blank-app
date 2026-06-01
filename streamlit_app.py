@@ -1,6 +1,7 @@
 import streamlit as st
 import random
 import os
+import json
 from streamlit_drawable_canvas import st_canvas
 
 # Настройка страницы
@@ -127,32 +128,35 @@ def live_game_zone():
     st.subheader("🖼️ Общая онлайн доска")
     st.caption("Сделай свой ход (нарисуй одну линию) и нажми кнопку ниже, чтобы отправить её остальным:")
 
-    # Безопасная инициализация: если данных нет, передаем пустой шаблон JSON для холста
-    if shared_game.canvas_data is not None:
-        init_draw = shared_game.canvas_data
-    else:
-        init_draw = {"backgroundImage": None, "objects": []}
+    # Динамическая сборка аргументов холста
+    canvas_kwargs = {
+        "fill_color": "rgba(255, 165, 0, 0.3)",
+        "stroke_width": 4,
+        "stroke_color": "#000000",
+        "background_color": "#FFFFFF",
+        "update_vis_cycle": True,
+        "height": 400,
+        "width": 500,
+        "drawing_mode": "freedraw",
+        "key": f"canvas_v1_r{shared_game.round_id}"
+    }
 
-    # Изолируем виджет во избежание конфликтов рендеринга
+    # Если рисунок уже существует в глобальном состоянии — передаем его как валидную JSON-строку
+    if shared_game.canvas_data is not None:
+        if isinstance(shared_game.canvas_data, str):
+            canvas_kwargs["initial_drawing"] = shared_game.canvas_data
+        else:
+            canvas_kwargs["initial_drawing"] = json.dumps(shared_game.canvas_data)
+
+    # Отрисовка холста в изолированном контейнере
     canvas_container = st.container()
     with canvas_container:
-        canvas_result = st_canvas(
-            fill_color="rgba(255, 165, 0, 0.3)",
-            stroke_width=4,
-            stroke_color="#000000",
-            background_color="#FFFFFF",
-            initial_drawing=init_draw, 
-            update_vis_cycle=True,
-            height=400,
-            width=500,
-            drawing_mode="freedraw",
-            key=f"canvas_static_{shared_game.round_id}" # Меняем ключ при смене раунда для полного сброса
-        )
+        canvas_result = st_canvas(**canvas_kwargs)
 
-    # Синхронизация рисунка
+    # Синхронизация рисунка с глобальной базой
     if canvas_result.json_data is not None:
         if canvas_result.json_data != shared_game.canvas_data:
-            # Если холст пустой по умолчанию, не предлагаем отправить воздух
+            # Предлагаем кнопку отправки только если на холсте физически появились линии
             if canvas_result.json_data.get("objects"):
                 if st.button("📤 Отправить мою линию на доску", type="primary", use_container_width=True):
                     shared_game.canvas_data = canvas_result.json_data
