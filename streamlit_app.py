@@ -99,7 +99,7 @@ st.divider()
 if shared_game.round_id == 0 or shared_game.theme is None:
     st.warning("Организатор еще не запустил раунд. Ждем...")
 else:
-    # --- ФРАГМЕНТ 1: Живой статус игроков и ролей (тикает сам) ---
+    # --- Живой статус игроков и ролей (внутри фрагмента, тикает сам) ---
     @st.fragment(run_every=3)
     def live_status_zone():
         st.subheader(f"Текущий раунд №{shared_game.round_id}")
@@ -123,50 +123,62 @@ else:
                 else:
                     st.success(f"✏️ ТЫ ХУДОЖНИК! Загаданное слово: **{shared_game.word}**")
         
-        # Индикатор для пацанов, сколько людей уже зашли в игру
         st.caption(f"👥 Игроков взяли роли: {shared_game.claimed_count} из 4")
 
     live_status_zone()
 
     st.write("---")
     st.subheader("🖼️ Общая онлайн доска")
-    st.caption("Сделай свой ход (нарисуй линию). Нажми кнопку отправки, чтобы её увидели остальные, либо кнопку обновления, чтобы подтянуть чужие линии.")
+    st.caption("Сделай свой ход (нарисуй линию). Нажми кнопку отправки, чтобы её увидели остальные.")
 
-    # --- ЗОНА ХОЛСТА: Вынесена из фрагмента для стабильного рендеринга ---
+    # Базовые настройки холста
     canvas_kwargs = {
         "fill_color": "rgba(255, 165, 0, 0.3)",
         "stroke_width": 4,
         "stroke_color": "#000000",
         "background_color": "#FFFFFF",
-        "update_vis_cycle": False, # Выключаем внутренний триггер обновлений
+        "update_vis_cycle": False,
         "height": 400,
         "width": 500,
         "drawing_mode": "freedraw",
-        "key": f"canvas_v2_r{shared_game.round_id}" # Сбрасывается только при смене раунда
+        # Динамический ключ раунда, чтобы холст гарантированно очищался в новом раунде
+        "key": f"canvas_round_{shared_game.round_id}" 
     }
 
+    # Если в глобальном состоянии РЕАЛЬНО есть сохраненные линии, передаем их
     if shared_game.canvas_data is not None:
-        if isinstance(shared_game.canvas_data, str):
-            canvas_kwargs["initial_drawing"] = shared_game.canvas_data
-        else:
-            canvas_kwargs["initial_drawing"] = json.dumps(shared_game.canvas_data)
+        try:
+            if isinstance(shared_game.canvas_data, dict):
+                canvas_kwargs["initial_drawing"] = shared_game.canvas_data
+            elif isinstance(shared_game.canvas_data, str) and shared_game.canvas_data.strip():
+                canvas_kwargs["initial_drawing"] = json.loads(shared_game.canvas_data)
+        except Exception:
+            pass  # При любой ошибке парсинга не передаем ничего, чтобы не свалить виджет
 
-    # Стабильная отрисовка
-    canvas_result = st_canvas(**canvas_kwargs)
-
-    # Кнопки управления холстом
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.button("🔄 Обновить доску", use_container_width=True):
+    # Жесткий try-except блок на случай любых капризов React-компонента
+    canvas_result = None
+    try:
+        canvas_result = st_canvas(**canvas_kwargs)
+    except Exception as e:
+        st.error("⚠️ Произошел сбой виджета холста. Пожалуйста, обновите страницу кнопки ниже.")
+        if st.button("🔄 Принудительно обновить доску", type="secondary"):
             st.rerun()
 
-    with col2:
-        if canvas_result is not None and canvas_result.json_data is not None:
-            # Если игрок нарисовал новые линии, которых нет в базе
-            if canvas_result.json_data != shared_game.canvas_data:
-                if canvas_result.json_data.get("objects"):
-                    if st.button("📤 Отправить мой ход", type="primary", use_container_width=True):
-                        shared_game.canvas_data = canvas_result.json_data
-                        st.success("Ход отправлен!")
-                        st.rerun()
+    # Интерфейс отправки ходов
+    if canvas_result is not None and canvas_result.json_data is not None:
+        # Проверяем, нарисовал ли пользователь хоть что-то
+        current_objects = canvas_result.json_data.get("objects", [])
+        
+        # Кнопки под холстом
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Синхронизировать рисунки (Обновить)", use_container_width=True):
+                st.rerun()
+                
+        with col2:
+            # Показываем кнопку отправки только если на доске физически есть линии
+            if current_objects:
+                if st.button("📤 Отправить мой ход", type="primary", use_container_width=True):
+                    shared_game.canvas_data = canvas_result.json_data
+                    st.success("Твой ход успешно отправлен пацанам!")
+                    st.rerun()
