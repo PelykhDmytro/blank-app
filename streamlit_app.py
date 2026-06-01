@@ -33,7 +33,7 @@ def load_words_from_file():
     except Exception:
         return base_words
 
-# Загружаем базу слов (вызовется один раз при старте сервера)
+# Загружаем базу слов
 WORDS_BANK = load_words_from_file()
 
 class GameState:
@@ -52,13 +52,14 @@ class GameState:
             random.shuffle(self.themes_pool)
         
         self.theme = self.themes_pool.pop()
-        # Выбираем случайное слово из загруженной темы
         self.word = random.choice(WORDS_BANK[self.theme])
         
         self.round_id += 1
         self.claimed_count = 0
         
+        # ЧЕТКИЙ ФИКС: Изначально ВСЕ четверо — художники
         self.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
+        # И только ОДИН случайный становится шпионом
         spy_index = random.randint(0, 3)
         self.roles_pool[spy_index] = "ШПИОН"
 
@@ -68,7 +69,7 @@ def get_global_game():
 
 shared_game = get_global_game()
 
-st.title("🎨 Fake Artist: Мега-База Слов")
+st.title("🎨 Fake Artist: Живое Обновление")
 st.caption(f"Загружено тем из файла words.txt: {len(WORDS_BANK)}")
 
 # Панель ведущего
