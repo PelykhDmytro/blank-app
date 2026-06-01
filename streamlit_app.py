@@ -23,23 +23,6 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
 
-    def start_new_round(self):
-        self.theme = random.choice(list(WORDS_BANK.keys()))
-        self.word = random.choice(WORDS_BANK[self.theme])
-        self.round_id += 1
-        self.claimed_count = 0
-        
-        self.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
-        spy_index = random.randint(0, 3)
-        self.roles_pool[spy_index] = "ШПИОН"
-
-    def reset_game_completely(self):
-        self.theme = None
-        self.word = None
-        self.round_id = 0
-        self.roles_pool = []
-        self.claimed_count = 0
-
 @st.cache_resource
 def get_global_game():
     return GameState()
@@ -58,26 +41,36 @@ with st.sidebar:
         
         # Кнопка генерации раунда
         if st.button("🔄 Сгенерировать новый раунд", type="primary", use_container_width=True):
-            shared_game.start_new_round()
+            shared_game.theme = random.choice(list(WORDS_BANK.keys()))
+            shared_game.word = random.choice(WORDS_BANK[shared_game.theme])
+            shared_game.round_id += 1
+            shared_game.claimed_count = 0
+            
+            shared_game.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
+            spy_index = random.randint(0, 3)
+            shared_game.roles_pool[spy_index] = "ШПИОН"
             st.success(f"🎉 Раунд №{shared_game.round_id} запущен!")
             
         st.write("---")
-        # Новая кнопка полного сброса
+        # Безопасный сброс параметров без вызова внутренних методов класса
         if st.button("❌ Сбросить всю игру с нуля", type="secondary", use_container_width=True):
-            shared_game.reset_game_completely()
-            st.warning("⚠️ Игра полностью сброшена! Сгенерируйте раунд заново.")
+            shared_game.theme = None
+            shared_game.word = None
+            shared_game.round_id = 0
+            shared_game.roles_pool = []
+            shared_game.claimed_count = 0
+            st.warning("⚠️ Игра полностью сброшена!")
     else:
         st.caption("Панель только для создателя игры.")
 
 st.divider()
 
-# Спец-фрагмент, который обновляет интерфейс у игроков каждые 2 секунды
+# Спец-фрагмент для живого обновления раз в 2 секунды
 @st.fragment(run_every=2)
 def live_game_zone():
-    # Если игра полностью сброшена админом (round_id == 0)
     if shared_game.round_id == 0 or shared_game.theme is None:
-        st.warning("Организатор еще не запустил раунд или сбросил игру. Ждем... (страница обновится сама)")
-        # На всякий случай чистим старые роли из памяти локальных браузеров игроков
+        st.warning("Организатор еще не запустил раунд или сбросил игру. Ждем...")
+        # Чистим локальные сессии игроков при сбросе
         for key in list(st.session_state.keys()):
             if key.startswith("role_r"):
                 del st.session_state[key]
@@ -87,7 +80,6 @@ def live_game_zone():
     
     role_key = f"role_r{shared_game.round_id}"
     
-    # Если роль еще не взята в этом раунде
     if role_key not in st.session_state:
         if shared_game.claimed_count < 4:
             if st.button("👁️ Узнать мою роль", use_container_width=True):
@@ -96,8 +88,6 @@ def live_game_zone():
                 st.rerun()
         else:
             st.error("🛑 Все 4 роли уже разобраны! Ждем новый раунд от админа.")
-            
-    # Если роль уже на этом телефоне получена
     else:
         my_role = st.session_state[role_key]
         show_card = st.checkbox("Показать мою карточку", key=f"show_v_{shared_game.round_id}")
@@ -105,9 +95,8 @@ def live_game_zone():
         if show_card:
             st.info(f"📋 Категория: **{shared_game.theme}**")
             if my_role == "ШПИОН":
-                st.error("🕵️ ТЫ ШПИОН! Ты не знаешь слова. Рисуй аккуратно и коси под остальных!")
+                st.error("🕵️ ТЫ ШПИОН! Ты не знаешь слова. Рисуй аккуратно!")
             else:
                 st.success(f"✏️ ТЫ ХУДОЖНИК! Загаданное слово: **{shared_game.word}**")
 
-# Запускаем живую зону
 live_game_zone()
