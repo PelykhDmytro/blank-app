@@ -46,7 +46,6 @@ class GameState:
         self.themes_pool = []
 
     def start_new_round(self):
-        # Перемешиваем темы, если пул пуст
         if not self.themes_pool:
             self.themes_pool = list(WORDS_BANK.keys())
             random.shuffle(self.themes_pool)
@@ -57,9 +56,7 @@ class GameState:
         self.round_id += 1
         self.claimed_count = 0
         
-        # ЧЕТКИЙ ФИКС: Изначально ВСЕ четверо — художники
         self.roles_pool = ["ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК", "ХУДОЖНИК"]
-        # И только ОДИН случайный становится шпионом
         spy_index = random.randint(0, 3)
         self.roles_pool[spy_index] = "ШПИОН"
 
@@ -83,6 +80,7 @@ with st.sidebar:
         if st.button("🔄 Сгенерировать новый раунд", type="primary", use_container_width=True):
             shared_game.start_new_round()
             st.success(f"🎉 Раунд №{shared_game.round_id} запущен!")
+            st.rerun()  # Фикс: мгновенно обновляем интерфейс админа
             
         st.write("---")
         if st.button("❌ Сбросить всю игру с нуля", type="secondary", use_container_width=True):
@@ -93,6 +91,7 @@ with st.sidebar:
             shared_game.claimed_count = 0
             shared_game.themes_pool = []
             st.warning("⚠️ Игра полностью сброшена!")
+            st.rerun()  # Фикс: мгновенно очищаем экран админа
     else:
         st.caption("Панель только для создателя игры.")
 
@@ -103,6 +102,7 @@ st.divider()
 def live_game_zone():
     if shared_game.round_id == 0 or shared_game.theme is None:
         st.warning("Организатор еще не запустил раунд или сбросил игру. Ждем...")
+        # Очищаем старые роли из памяти браузеров при сбросе
         for key in list(st.session_state.keys()):
             if key.startswith("role_r"):
                 del st.session_state[key]
@@ -129,5 +129,8 @@ def live_game_zone():
                 st.error("🕵️ ТЫ ШПИОН! Ты не знаешь слова. Рисуй аккуратно!")
             else:
                 st.success(f"✏️ ТЫ ХУДОЖНИК! Загаданное слово: **{shared_game.word}**")
+
+    # Живой счетчик, чтобы все видели, сколько человек уже взяли карты
+    st.caption(f"👥 Карточки разобрали: {shared_game.claimed_count} из 4")
 
 live_game_zone()
