@@ -84,7 +84,7 @@ shared_game = get_fresh_global_game()
 if not hasattr(shared_game, 'total_players'):
     shared_game.total_players = 4
 
-st.title("🎨 Fake Artist: Живое Обновление")
+st.title("🎨 Я шпион, так вижу")
 st.caption(f"Загружено тем из файла words.txt: {len(WORDS_BANK)}")
 
 # Панель ведущего
