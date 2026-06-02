@@ -44,9 +44,10 @@ class GameState:
         self.roles_pool = []
         self.claimed_count = 0
         self.themes_pool = []
-        self.total_players = 4  # Значение по умолчанию
+        self.total_players = 4  # Базовое значение
 
-    def start_new_round(self, players_count):
+    # Сделали players_count=4 по умолчанию, чтобы старый кэш не вызывал TypeError
+    def start_new_round(self, players_count=4):
         self.total_players = players_count
         
         if not self.themes_pool:
@@ -60,8 +61,8 @@ class GameState:
         self.claimed_count = 0
         
         # Генерируем пул ролей под выбранное количество игроков
-        self.roles_pool = ["ХУДОЖНИК"] * self.total_players
-        spy_index = random.randint(0, self.total_players - 1)
+        self.roles_pool = ["ХУДОЖНИК"] * int(self.total_players)
+        spy_index = random.randint(0, int(self.total_players) - 1)
         self.roles_pool[spy_index] = "ШПИОН"
 
     def reset_game_completely(self):
@@ -72,11 +73,16 @@ class GameState:
         self.claimed_count = 0
         self.themes_pool = []
 
+# Переименовали функцию кэша, чтобы Streamlit принудительно сбросил старую память сервера
 @st.cache_resource
-def get_global_game():
+def get_fresh_global_game():
     return GameState()
 
-shared_game = get_global_game()
+shared_game = get_fresh_global_game()
+
+# Проверяем, что у объекта точно есть нужное свойство (защита от багов кэша)
+if not hasattr(shared_game, 'total_players'):
+    shared_game.total_players = 4
 
 st.title("🎨 Fake Artist: Живое Обновление")
 st.caption(f"Загружено тем из файла words.txt: {len(WORDS_BANK)}")
@@ -94,7 +100,7 @@ with st.sidebar:
             "Количество игроков:", 
             min_value=3, 
             max_value=10, 
-            value=int(getattr(shared_game, 'total_players', 4)), 
+            value=int(shared_game.total_players), 
             step=1
         )
         
@@ -126,8 +132,8 @@ def live_game_zone():
     st.subheader(f"Текущий раунд №{shared_game.round_id}")
     role_key = f"role_r{shared_game.round_id}"
     
-    # Безопасный перехват лимита игроков
-    total_slots = getattr(shared_game, 'total_players', 4)
+    # Защитное получение лимита игроков
+    total_slots = int(getattr(shared_game, 'total_players', 4))
     
     if role_key not in st.session_state:
         if shared_game.claimed_count < total_slots:
@@ -148,7 +154,7 @@ def live_game_zone():
             else:
                 st.success(f"✏️ ТЫ ХУДОЖНИК! Загаданное слово: **{shared_game.word}**")
 
-    # Динамический счетчик под текущую настройку админа
+    # Динамический счетчик игроков
     st.caption(f"👥 Карточки разобрали: {shared_game.claimed_count} из {total_slots}")
 
 live_game_zone()
